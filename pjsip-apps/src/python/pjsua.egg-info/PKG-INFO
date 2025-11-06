@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: pjsua
+Version: 2.15.0
+Summary: SIP User Agent Library based on PJSIP
+Home-page: http://trac.pjsip.org/repos/wiki/Python_SIP_Tutorial
+Dynamic: home-page
+Dynamic: summary
