@@ -95,3 +95,12 @@ getversion.mak
 configure.out
 */Platforms/iOS/pjsua2/*
 */Platforms/iOS/lib/*
+
+# Custom SIP applications directory
+my-sip-apps/
+
+# Audio and recording files
+recordings/
+*.m4a
+*.wav
+*.pcm

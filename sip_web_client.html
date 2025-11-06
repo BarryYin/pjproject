@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SIP Web客户端 - 印度尼西亚线路</title>
+    <script src="https://cdn.jsdelivr.net/npm/jssip@3.10.1/dist/jssip.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 500px;
+            width: 100%;
+            padding: 40px;
+        }
+        
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 30px;
+        }
+        
+        .config-section {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .config-section h3 {
+            color: #555;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+        
+        .config-info {
+            font-size: 12px;
+            color: #666;
+            line-height: 1.6;
+        }
+        
+        .config-info div {
+            margin-bottom: 5px;
+        }
+        
+        .input-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            color: #555;
+            font-weight: 500;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        
+        input[type="text"] {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        button {
+            flex: 1;
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .btn-call {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-call:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-hangup {
+            background: #ff4757;
+            color: white;
+        }
+        
+        .btn-hangup:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(255, 71, 87, 0.4);
+        }
+        
+        .status-box {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .status-label {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        
+        .status-value {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .status-value.connecting {
+            color: #ffa502;
+        }
+        
+        .status-value.connected {
+            color: #2ed573;
+        }
+        
+        .status-value.disconnected {
+            color: #ff4757;
+        }
+        
+        .log-box {
+            background: #2c3e50;
+            color: #ecf0f1;
+            border-radius: 10px;
+            padding: 15px;
+            height: 200px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        
+        .log-entry {
+            margin-bottom: 5px;
+            word-wrap: break-word;
+        }
+        
+        .log-entry.info {
+            color: #3498db;
+        }
+        
+        .log-entry.success {
+            color: #2ecc71;
+        }
+        
+        .log-entry.error {
+            color: #e74c3c;
+        }
+        
+        .log-entry.warning {
+            color: #f39c12;
+        }
+        
+        audio {
+            display: none;
+        }
+        
+        .timer {
+            text-align: center;
+            font-size: 24px;
+            font-weight: 600;
+            color: #667eea;
+            margin: 15px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📞 SIP Web客户端</h1>
+        <div class="subtitle">印度尼西亚线路测试</div>
+        
+        <div class="config-section">
+            <h3>📋 线路配置</h3>
+            <div class="config-info">
+                <div><strong>服务器:</strong> 147.139.205.88:5060</div>
+                <div><strong>主叫:</strong> 6281479242434</div>
+                <div><strong>前缀:</strong> 13462</div>
+            </div>
+        </div>
+        
+        <div class="status-box">
+            <div class="status-label">连接状态</div>
+            <div id="status" class="status-value disconnected">未连接</div>
+        </div>
+        
+        <div class="input-group">
+            <label for="phoneNumber">目标号码</label>
+            <input type="text" id="phoneNumber" placeholder="例如: 81234567890" />
+        </div>
+        
+        <div class="button-group">
+            <button id="callBtn" class="btn-call">📞 拨号</button>
+            <button id="hangupBtn" class="btn-hangup" disabled>📵 挂断</button>
+        </div>
+        
+        <div class="timer" id="timer" style="display: none;">00:00</div>
+        
+        <div class="log-box" id="logBox">
+            <div class="log-entry info">等待拨号...</div>
+        </div>
+        
+        <!-- 音频元素 -->
+        <audio id="remoteAudio" autoplay></audio>
+    </div>
+
+    <script>
+        // 配置
+        const CONFIG = {
+            server: '147.139.205.88',
+            wsPort: 5060,  // WebSocket端口，可能需要调整
+            wsPath: '',    // WebSocket路径，如果需要的话
+            sipPort: 5060,
+            callerNumber: '6281479242434',
+            prefix: '13462',
+            useWSS: false  // 是否使用加密WebSocket (wss://)
+        };
+        
+        let ua = null;
+        let currentSession = null;
+        let callStartTime = null;
+        let timerInterval = null;
+        
+        // DOM元素
+        const statusEl = document.getElementById('status');
+        const phoneNumberEl = document.getElementById('phoneNumber');
+        const callBtn = document.getElementById('callBtn');
+        const hangupBtn = document.getElementById('hangupBtn');
+        const logBoxEl = document.getElementById('logBox');
+        const remoteAudioEl = document.getElementById('remoteAudio');
+        const timerEl = document.getElementById('timer');
+        
+        // 日志函数
+        function log(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            const time = new Date().toLocaleTimeString();
+            entry.textContent = `[${time}] ${message}`;
+            logBoxEl.appendChild(entry);
+            logBoxEl.scrollTop = logBoxEl.scrollHeight;
+        }
+        
+        // 更新状态
+        function updateStatus(text, className) {
+            statusEl.textContent = text;
+            statusEl.className = `status-value ${className}`;
+        }
+        
+        // 更新计时器
+        function startTimer() {
+            callStartTime = Date.now();
+            timerEl.style.display = 'block';
+            timerInterval = setInterval(() => {
+                const elapsed = Math.floor((Date.now() - callStartTime) / 1000);
+                const minutes = Math.floor(elapsed / 60);
+                const seconds = elapsed % 60;
+                timerEl.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+            }, 1000);
+        }
+        
+        function stopTimer() {
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+            timerEl.style.display = 'none';
+        }
+        
+        // 初始化JsSIP
+        function initSIP() {
+            log('正在初始化SIP客户端...', 'info');
+            
+            // 构造WebSocket URI
+            const protocol = CONFIG.useWSS ? 'wss' : 'ws';
+            const wsUri = `${protocol}://${CONFIG.server}:${CONFIG.wsPort}${CONFIG.wsPath}`;
+            
+            log(`WebSocket URI: ${wsUri}`, 'info');
+            log('⚠ 注意: 如果连接失败，SIP服务器可能不支持WebSocket', 'warning');
+            log('  请确认服务器支持 ws:// 或 wss:// 协议', 'warning');
+            
+            const socket = new JsSIP.WebSocketInterface(wsUri);
+            
+            // WebSocket连接事件
+            socket.onconnect = () => {
+                log('✓ WebSocket底层连接成功', 'success');
+            };
+            
+            socket.ondisconnect = (e) => {
+                log(`✗ WebSocket底层断开: ${e.reason || '未知原因'}`, 'error');
+                if (e.code) {
+                    log(`  错误码: ${e.code}`, 'error');
+                }
+            };
+            
+            socket.onerror = (e) => {
+                log(`✗ WebSocket错误: ${e.message || '连接失败'}`, 'error');
+                log('  可能原因:', 'warning');
+                log('  1. SIP服务器不支持WebSocket协议', 'warning');
+                log('  2. WebSocket端口配置错误', 'warning');
+                log('  3. 防火墙阻止了连接', 'warning');
+            };
+            
+            const configuration = {
+                sockets: [socket],
+                uri: `sip:${CONFIG.callerNumber}@${CONFIG.server}`,
+                display_name: CONFIG.callerNumber,
+                register: false,  // 不注册，直接呼叫
+                session_timers: false,
+                connection_recovery_max_interval: 30,
+                connection_recovery_min_interval: 2
+            };
+            
+            try {
+                ua = new JsSIP.UA(configuration);
+                
+                // 事件监听
+                ua.on('connected', () => {
+                    log('✓ JsSIP已连接到SIP服务器', 'success');
+                    updateStatus('已连接', 'connected');
+                    callBtn.disabled = false;
+                });
+                
+                ua.on('disconnected', () => {
+                    log('✗ JsSIP断开连接', 'error');
+                    updateStatus('未连接', 'disconnected');
+                    callBtn.disabled = true;
+                    ua = null;  // 清空UA对象
+                });
+                
+                ua.on('registered', () => {
+                    log('✓ SIP已注册', 'success');
+                });
+                
+                ua.on('registrationFailed', (e) => {
+                    log(`✗ 注册失败: ${e.cause}`, 'error');
+                });
+                
+                ua.on('newRTCSession', (e) => {
+                    handleNewSession(e.session);
+                });
+                
+                // 启动
+                log('正在启动UA...', 'info');
+                ua.start();
+                
+                // 5秒后检查连接状态
+                setTimeout(() => {
+                    if (!ua || !ua.isConnected()) {
+                        log('✗ 连接超时！WebSocket未能建立连接', 'error');
+                        log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'error');
+                        log('可能的解决方案:', 'warning');
+                        log('1. 该SIP服务器可能不支持WebSocket', 'warning');
+                        log('2. 需要使用UDP/TCP协议的传统SIP客户端', 'warning');
+                        log('3. 建议使用 Python 脚本版本:', 'warning');
+                        log('   ./sip_test_call_indonesia.py <号码>', 'info');
+                        updateStatus('WebSocket不可用', 'disconnected');
+                    }
+                }, 5000);
+                
+            } catch (error) {
+                log(`✗ 初始化失败: ${error.message}`, 'error');
+                updateStatus('初始化失败', 'disconnected');
+            }
+        }
+        
+        // 处理新会话
+        function handleNewSession(session) {
+            currentSession = session;
+            
+            session.on('progress', () => {
+                log('呼叫进行中...', 'info');
+                updateStatus('振铃中', 'connecting');
+            });
+            
+            session.on('accepted', () => {
+                log('✓ 呼叫已接通!', 'success');
+                updateStatus('通话中', 'connected');
+                startTimer();
+            });
+            
+            session.on('confirmed', () => {
+                log('✓ 会话已确认', 'success');
+            });
+            
+            session.on('ended', () => {
+                log('呼叫已结束', 'info');
+                updateStatus('已连接', 'connected');
+                stopTimer();
+                callBtn.disabled = false;
+                hangupBtn.disabled = true;
+                currentSession = null;
+            });
+            
+            session.on('failed', (e) => {
+                log(`✗ 呼叫失败: ${e.cause}`, 'error');
+                updateStatus('已连接', 'connected');
+                stopTimer();
+                callBtn.disabled = false;
+                hangupBtn.disabled = true;
+                currentSession = null;
+            });
+            
+            session.on('peerconnection', (e) => {
+                const peerconnection = e.peerconnection;
+                
+                peerconnection.addEventListener('addstream', (e) => {
+                    log('✓ 接收到远程音频流', 'success');
+                    remoteAudioEl.srcObject = e.stream;
+                    remoteAudioEl.play().catch(err => {
+                        log(`音频播放失败: ${err.message}`, 'warning');
+                    });
+                });
+            });
+        }
+        
+        // 拨打电话
+        function makeCall() {
+            // 检查UA是否已初始化
+            if (!ua) {
+                log('✗ SIP客户端未初始化', 'error');
+                log('  请等待连接成功或刷新页面重试', 'warning');
+                return;
+            }
+            
+            // 检查UA是否已连接
+            if (!ua.isConnected()) {
+                log('✗ WebSocket未连接', 'error');
+                log('  该SIP服务器可能不支持WebSocket协议', 'warning');
+                log('  建议使用Python脚本: ./sip_test_call_indonesia.py', 'info');
+                return;
+            }
+            
+            const phoneNumber = phoneNumberEl.value.trim();
+            
+            if (!phoneNumber) {
+                log('✗ 请输入目标号码', 'error');
+                return;
+            }
+            
+            // 构造完整号码: 前缀+号码
+            const fullNumber = `${CONFIG.prefix}${phoneNumber}`;
+            const sipUri = `sip:${fullNumber}@${CONFIG.server}:${CONFIG.sipPort}`;
+            
+            log(`正在拨打: ${fullNumber}`, 'info');
+            log(`SIP URI: ${sipUri}`, 'info');
+            
+            const options = {
+                mediaConstraints: {
+                    audio: true,
+                    video: false
+                },
+                pcConfig: {
+                    iceServers: []
+                }
+            };
+            
+            try {
+                currentSession = ua.call(sipUri, options);
+                callBtn.disabled = true;
+                hangupBtn.disabled = false;
+                updateStatus('呼叫中', 'connecting');
+            } catch (error) {
+                log(`✗ 拨号失败: ${error.message}`, 'error');
+            }
+        }
+        
+        // 挂断电话
+        function hangup() {
+            if (currentSession) {
+                log('正在挂断...', 'info');
+                currentSession.terminate();
+            }
+        }
+        
+        // 事件绑定
+        callBtn.addEventListener('click', makeCall);
+        hangupBtn.addEventListener('click', hangup);
+        
+        phoneNumberEl.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !callBtn.disabled) {
+                makeCall();
+            }
+        });
+        
+        // 页面加载时初始化
+        window.addEventListener('load', () => {
+            log('=== SIP Web客户端启动 ===', 'info');
+            log('印度尼西亚线路测试工具', 'info');
+            log(`服务器: ${CONFIG.server}:${CONFIG.sipPort}`, 'info');
+            log(`主叫: ${CONFIG.callerNumber}`, 'info');
+            log(`前缀: ${CONFIG.prefix}`, 'info');
+            log('----------------------------', 'info');
+            
+            // 延迟初始化，让日志先显示
+            setTimeout(initSIP, 500);
+        });
+        
+        // 页面关闭前清理
+        window.addEventListener('beforeunload', () => {
+            if (currentSession) {
+                currentSession.terminate();
+            }
+            if (ua) {
+                ua.stop();
+            }
+        });
+    </script>
+</body>
+</html>
