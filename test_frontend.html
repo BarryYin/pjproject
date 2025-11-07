@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>AI对话系统 - 测试前端</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .status-card {
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 20px;
+            margin-bottom: 25px;
+            border-radius: 8px;
+        }
+        
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            padding: 8px 0;
+            border-bottom: 1px solid #e9ecef;
+        }
+        
+        .status-item:last-child {
+            border-bottom: none;
+        }
+        
+        .status-label {
+            font-weight: 600;
+            color: #495057;
+        }
+        
+        .status-value {
+            color: #667eea;
+            font-weight: 500;
+        }
+        
+        .control-section {
+            margin: 25px 0;
+        }
+        
+        .control-section h3 {
+            color: #495057;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+        
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        input[type="text"] {
+            flex: 1;
+            padding: 12px 15px;
+            font-size: 16px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            transition: border-color 0.3s;
+        }
+        
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        button {
+            padding: 12px 30px;
+            font-size: 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-danger {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(245, 87, 108, 0.4);
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+        
+        .log-container {
+            background: #1e1e1e;
+            color: #00ff00;
+            padding: 20px;
+            border-radius: 8px;
+            height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        .log-entry {
+            margin: 5px 0;
+        }
+        
+        .log-time {
+            color: #888;
+        }
+        
+        .log-success {
+            color: #00ff00;
+        }
+        
+        .log-error {
+            color: #ff4444;
+        }
+        
+        .log-info {
+            color: #00bfff;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        
+        .badge-success {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .badge-danger {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .badge-warning {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .api-info {
+            background: #e7f3ff;
+            border: 1px solid #b3d9ff;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        
+        .api-info h4 {
+            color: #0066cc;
+            margin-bottom: 10px;
+        }
+        
+        .api-info code {
+            background: #fff;
+            padding: 2px 6px;
+            border-radius: 3px;
+            color: #d63384;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 AI智能对话系统</h1>
+            <p>免费方案 | 印尼语优化 | ASR + GPT-3.5 + TTS</p>
+        </div>
+        
+        <div class="content">
+            <!-- 状态显示 -->
+            <div class="status-card">
+                <h3 style="color: #495057; margin-bottom: 15px;">📊 系统状态</h3>
+                <div class="status-item">
+                    <span class="status-label">后端连接:</span>
+                    <span class="status-value" id="backend-status">
+                        <span class="badge badge-warning">检测中...</span>
+                    </span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">活动呼叫:</span>
+                    <span class="status-value" id="call-status">
+                        <span class="badge badge-success">空闲</span>
+                    </span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">AI就绪:</span>
+                    <span class="status-value" id="ai-status">
+                        <span class="badge badge-warning">未知</span>
+                    </span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">队列长度:</span>
+                    <span class="status-value" id="queue-size">0</span>
+                </div>
+            </div>
+            
+            <!-- 呼叫控制 -->
+            <div class="control-section">
+                <h3>📞 呼叫控制</h3>
+                <div class="input-group">
+                    <input type="text" id="phone-input" placeholder="输入电话号码 (例如: 82121065486)" value="82121065486">
+                    <button class="btn-primary" onclick="makeCall()">开始AI对话</button>
+                    <button class="btn-danger" onclick="hangupCall()">挂断</button>
+                </div>
+            </div>
+            
+            <!-- 音频控制 -->
+            <div class="control-section">
+                <h3>🎵 音频控制</h3>
+                <div class="input-group">
+                    <input type="text" id="audio-input" placeholder="音频文件名 (例如: welcome.wav)">
+                    <button class="btn-secondary" onclick="addAudio()">添加到队列</button>
+                    <button class="btn-secondary" onclick="playNow()">立即播放</button>
+                </div>
+            </div>
+            
+            <!-- 日志 -->
+            <div class="control-section">
+                <h3>📝 系统日志</h3>
+                <div class="log-container" id="log-container">
+                    <div class="log-entry log-success">
+                        <span class="log-time">[系统]</span> 前端页面加载成功
+                    </div>
+                    <div class="log-entry log-info">
+                        <span class="log-time">[提示]</span> 正在检测后端连接...
+                    </div>
+                </div>
+            </div>
+            
+            <!-- API信息 -->
+            <div class="api-info">
+                <h4>🔌 后端API地址</h4>
+                <p><code id="api-url">http://localhost:8090</code></p>
+                <button class="btn-secondary" style="margin-top: 10px;" onclick="changeAPI()">修改API地址</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let API_BASE = 'http://localhost:8090';
+        
+        // 日志函数
+        function log(message, type = 'info') {
+            const logContainer = document.getElementById('log-container');
+            const time = new Date().toLocaleTimeString();
+            const className = `log-${type}`;
+            
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${className}`;
+            entry.innerHTML = `<span class="log-time">[${time}]</span> ${message}`;
+            
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        // 修改API地址
+        function changeAPI() {
+            const newAPI = prompt('输入后端API地址:', API_BASE);
+            if (newAPI) {
+                API_BASE = newAPI;
+                document.getElementById('api-url').textContent = API_BASE;
+                log(`API地址已更改为: ${API_BASE}`, 'success');
+                checkBackend();
+            }
+        }
+        
+        // 检查后端连接
+        function checkBackend() {
+            log('正在检测后端连接...', 'info');
+            
+            fetch(`${API_BASE}/api/status`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                mode: 'cors'
+            })
+            .then(response => {
+                log(`后端响应状态: ${response.status}`, 'info');
+                return response.json();
+            })
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('backend-status').innerHTML = 
+                        '<span class="badge badge-success">✓ 已连接</span>';
+                    log('后端连接成功！', 'success');
+                    updateStatus(data);
+                } else {
+                    throw new Error('Backend returned error');
+                }
+            })
+            .catch(error => {
+                document.getElementById('backend-status').innerHTML = 
+                    '<span class="badge badge-danger">✗ 未连接</span>';
+                log(`连接失败详情: ${error.toString()}`, 'error');
+                log(`尝试连接: ${API_BASE}/api/status`, 'error');
+                log('可能原因: 1.后端未启动 2.端口不对 3.防火墙阻止', 'error');
+            });
+        }
+        
+        // 更新状态
+        function updateStatus(data) {
+            // 呼叫状态
+            if (data.has_active_call) {
+                if (data.call_connected) {
+                    document.getElementById('call-status').innerHTML = 
+                        '<span class="badge badge-success">通话中</span>';
+                } else {
+                    document.getElementById('call-status').innerHTML = 
+                        '<span class="badge badge-warning">呼叫中</span>';
+                }
+            } else {
+                document.getElementById('call-status').innerHTML = 
+                    '<span class="badge badge-success">空闲</span>';
+            }
+            
+            // AI状态
+            if (data.ai_ready) {
+                document.getElementById('ai-status').innerHTML = 
+                    '<span class="badge badge-success">✓ 就绪</span>';
+            } else {
+                document.getElementById('ai-status').innerHTML = 
+                    '<span class="badge badge-warning">准备中</span>';
+            }
+            
+            // 队列长度
+            document.getElementById('queue-size').textContent = data.queue_size || 0;
+        }
+        
+        // 发起呼叫
+        function makeCall() {
+            const phone = document.getElementById('phone-input').value.trim();
+            
+            if (!phone) {
+                alert('请输入电话号码');
+                return;
+            }
+            
+            log(`🤖 发起AI对话: ${phone}`, 'info');
+            
+            fetch(`${API_BASE}/api/call`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({phone_number: phone})
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    log(`✓ ${data.message}`, 'success');
+                    log('AI系统会自动识别语音并智能回复', 'info');
+                    setTimeout(checkBackend, 1000);
+                } else {
+                    log(`✗ 呼叫失败: ${data.error}`, 'error');
+                }
+            })
+            .catch(error => {
+                log(`✗ 请求失败: ${error.message}`, 'error');
+            });
+        }
+        
+        // 挂断
+        function hangupCall() {
+            log('正在挂断...', 'info');
+            
+            fetch(`${API_BASE}/api/hangup`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    log(`✓ ${data.message}`, 'success');
+                    setTimeout(checkBackend, 500);
+                } else {
+                    log(`✗ ${data.error}`, 'error');
+                }
+            })
+            .catch(error => {
+                log(`✗ 请求失败: ${error.message}`, 'error');
+            });
+        }
+        
+        // 添加音频
+        function addAudio() {
+            const filename = document.getElementById('audio-input').value.trim();
+            
+            if (!filename) {
+                alert('请输入音频文件名');
+                return;
+            }
+            
+            log(`添加音频: ${filename}`, 'info');
+            
+            fetch(`${API_BASE}/api/add_audio`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({filename: filename})
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    log(`✓ ${data.message}`, 'success');
+                    setTimeout(checkBackend, 500);
+                } else {
+                    log(`✗ ${data.error}`, 'error');
+                }
+            })
+            .catch(error => {
+                log(`✗ 请求失败: ${error.message}`, 'error');
+            });
+        }
+        
+        // 立即播放
+        function playNow() {
+            const filename = document.getElementById('audio-input').value.trim();
+            
+            if (!filename) {
+                alert('请输入音频文件名');
+                return;
+            }
+            
+            log(`立即播放: ${filename}`, 'info');
+            
+            fetch(`${API_BASE}/api/play_now`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({filename: filename})
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    log(`✓ ${data.message}`, 'success');
+                } else {
+                    log(`✗ ${data.error}`, 'error');
+                }
+            })
+            .catch(error => {
+                log(`✗ 请求失败: ${error.message}`, 'error');
+            });
+        }
+        
+        // 页面加载时检查后端
+        window.onload = function() {
+            log('前端页面初始化完成', 'success');
+            checkBackend();
+            
+            // 每5秒自动刷新状态
+            setInterval(checkBackend, 5000);
+        };
+    </script>
+</body>
+</html>

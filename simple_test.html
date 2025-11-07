@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>测试</title>
+</head>
+<body>
+    <h1>连接测试</h1>
+    <button onclick="test()">测试后端</button>
+    <pre id="result"></pre>
+    
+    <script>
+        function test() {
+            const result = document.getElementById('result');
+            result.textContent = '正在测试...\n';
+            
+            fetch('http://localhost:8090/api/status', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
+            })
+            .then(response => {
+                result.textContent += `状态码: ${response.status}\n`;
+                return response.json();
+            })
+            .then(data => {
+                result.textContent += '响应: ' + JSON.stringify(data, null, 2);
+            })
+            .catch(error => {
+                result.textContent += '错误: ' + error.toString();
+            });
+        }
+        
+        // 自动测试
+        window.onload = test;
+    </script>
+</body>
+</html>
