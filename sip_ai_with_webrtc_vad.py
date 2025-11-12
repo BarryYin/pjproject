@@ -238,63 +238,79 @@ class ASREngine:
 
 class TTSEngine:
     def __init__(self):
-        # 尝试导入Edge TTS
+        # 使用 Alibaba DashScope TTS
         try:
-            import edge_tts
-            self.edge_tts = edge_tts
-            self.use_edge = True
-        except:
-            self.edge_tts = None
-            self.use_edge = False
+            import dashscope
+            from dashscope.audio.tts import SpeechSynthesizer
+            
+            self.dashscope = dashscope
+            self.SpeechSynthesizer = SpeechSynthesizer
+            
+            # 设置API Key（从配置获取或使用默认）
+            self.api_key = os.getenv('DASHSCOPE_API_KEY', 'sk-ebf86b67058945fa827863a3742df0b0')
+            self.dashscope.api_key = self.api_key
+            
+            # 配置
+            self.model = 'sambert-indah-v1'  # 印尼语女声
+            self.sample_rate = 8000  # 电话格式
+            
+            self.use_dashscope = True
+            print("[TTS] DashScope TTS已初始化")
+            print(f"  模型: {self.model}")
+            print(f"  采样率: {self.sample_rate}Hz")
+            
+        except Exception as e:
+            print(f"[TTS] DashScope初始化失败: {e}")
+            self.use_dashscope = False
         
-        # 检查espeak作为本地备份
+        # 备选方案：espeak
         self.espeak_available = os.system("which espeak >/dev/null 2>&1") == 0
-        
         if self.espeak_available:
             print("[TTS] 本地espeak可用（备选方案）")
-        else:
-            print("[TTS] 正在安装espeak...")
-            os.system("sudo apt-get install -y espeak >/dev/null 2>&1")
-            self.espeak_available = os.system("which espeak >/dev/null 2>&1") == 0
     
-    async def _synthesize(self, text, output_file):
-        os.makedirs(os.path.dirname(output_file), exist_ok=True)
-        
-        # Edge TTS有时不稳定，直接跳过使用espeak
-        # 取消注释下面的代码来尝试Edge TTS:
-        """
-        max_retries = 2
-        for attempt in range(max_retries):
-            try:
-                comm = self.edge_tts.Communicate(text, CONFIG['tts_voice'])
-                await comm.save(output_file)
-                
-                # 验证文件
-                if os.path.exists(output_file) and os.path.getsize(output_file) > 1000:
-                    return True
-                else:
-                    raise Exception("生成的音频文件太小或为空")
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(0.5)
-                    continue
-                else:
-                    raise e
-        """
-        # 暂时禁用Edge TTS
-        raise Exception("Edge TTS已禁用，使用本地espeak")
+    def synthesize_dashscope(self, text):
+        """使用DashScope TTS合成"""
+        try:
+            start = time.time()
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            wav = os.path.join(CONFIG['temp_dir'], f"tts_dashscope_{ts}.wav")
+            
+            # 调用DashScope API
+            result = self.SpeechSynthesizer.call(
+                model=self.model,
+                text=text,
+                sample_rate=self.sample_rate,
+                format='wav'
+            )
+            
+            # 检查结果
+            if result.get_audio_data() is None:
+                raise Exception("未生成音频数据")
+            
+            # 保存音频
+            with open(wav, 'wb') as f:
+                f.write(result.get_audio_data())
+            
+            # 验证文件
+            if not os.path.exists(wav) or os.path.getsize(wav) < 1000:
+                raise Exception("音频文件太小或为空")
+            
+            elapsed = time.time() - start
+            print(f"  [TTS] DashScope完成 ({elapsed:.1f}s, {os.path.getsize(wav)} bytes)")
+            return wav
+            
+        except Exception as e:
+            print(f"  [TTS] DashScope失败: {e}")
+            return None
     
     def synthesize_espeak(self, text):
-        """使用espeak本地TTS"""
+        """使用espeak本地TTS（备选）"""
         try:
             start = time.time()
             ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             wav = os.path.join(CONFIG['temp_dir'], f"tts_espeak_{ts}.wav")
             
             # 使用espeak合成
-            # -v id: 印尼语
-            # -s 150: 语速150
-            # -w: 输出WAV文件
             cmd = f'espeak -v id -s 150 -w "{wav}.tmp" "{text}" 2>/dev/null'
             result = os.system(cmd)
             
@@ -305,7 +321,6 @@ class TTSEngine:
             cmd2 = f'ffmpeg -i "{wav}.tmp" -ar 8000 -ac 1 "{wav}" -y -loglevel error 2>&1'
             result2 = os.system(cmd2)
             
-            # 删除临时文件
             try:
                 os.remove(f"{wav}.tmp")
             except:
@@ -323,44 +338,22 @@ class TTSEngine:
             return None
     
     def synthesize(self, text):
-        # 首先尝试Edge TTS
-        if self.use_edge and self.edge_tts:
-            try:
-                start = time.time()
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                mp3 = os.path.join(CONFIG['temp_dir'], f"tts_{ts}.mp3")
-                
-                asyncio.run(self._synthesize(text, mp3))
-                
-                if not os.path.exists(mp3) or os.path.getsize(mp3) == 0:
-                    raise Exception("未生成音频")
-                
-                wav = mp3.replace('.mp3', '.wav')
-                result = os.system(f'ffmpeg -i "{mp3}" -ar 8000 -ac 1 "{wav}" -y -loglevel error 2>&1')
-                
-                if result != 0 or not os.path.exists(wav):
-                    raise Exception("转换失败")
-                
-                try:
-                    os.remove(mp3)
-                except:
-                    pass
-                
-                elapsed = time.time() - start
-                print(f"  [TTS] Edge TTS完成 ({elapsed:.1f}s)")
-                return wav
-                
-            except Exception as e:
-                print(f"  [TTS] Edge TTS失败: {e}")
-                # 继续尝试espeak
+        """合成语音 - 优先使用DashScope"""
         
-        # 备选方案：使用espeak
+        # 首选：DashScope TTS
+        if self.use_dashscope:
+            wav = self.synthesize_dashscope(text)
+            if wav:
+                return wav
+            print("  [TTS] DashScope失败，尝试备选方案...")
+        
+        # 备选：espeak
         if self.espeak_available:
-            print(f"  [TTS] 使用本地espeak...")
+            print("  [TTS] 使用espeak...")
             return self.synthesize_espeak(text)
         
         # 都失败了
-        print(f"  [TTS] ⚠ 所有TTS方案都失败")
+        print("  [TTS] ⚠ 所有TTS方案都失败")
         return None
 
 
@@ -528,12 +521,14 @@ class VADCallCallback(pj.CallCallback):
                         
                         if event_type == 'speech_complete':
                             # 检测到完整句子，处理它
-                            if not self.is_processing:
+                            if not self.is_processing and self.connected:
                                 threading.Thread(
                                     target=self._process_speech,
                                     args=(audio_data,),
                                     daemon=True
                                 ).start()
+                            elif not self.connected:
+                                print("[VAD] 通话已结束，跳过语音处理")
                 else:
                     # 没有新数据
                     no_data_count += 1
@@ -574,6 +569,11 @@ class VADCallCallback(pj.CallCallback):
             print("  🎤 处理语音")
             print("="*60)
             
+            # 检查连接状态
+            if not self.connected:
+                print("  ⚠ 通话已结束，取消处理")
+                return
+            
             # 保存为临时文件
             ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             temp_wav = os.path.join(CONFIG['temp_dir'], f"speech_{ts}.wav")
@@ -594,14 +594,29 @@ class VADCallCallback(pj.CallCallback):
             
             print(f"  👤 用户: {text}")
             
+            # 再次检查连接状态（ASR可能耗时）
+            if not self.connected:
+                print("  ⚠ 通话已结束，取消AI处理")
+                return
+            
             # AI
             print("  [2/3] AI生成...")
             reply = self.ai.get_response(text)
             print(f"  🤖 AI: {reply}")
             
+            # 再次检查连接状态（AI可能耗时）
+            if not self.connected:
+                print("  ⚠ 通话已结束，取消TTS")
+                return
+            
             # TTS
             print("  [3/3] TTS合成...")
             audio = self.tts.synthesize(reply)
+            
+            # 最后检查连接状态
+            if not self.connected:
+                print("  ⚠ 通话已结束，取消播放")
+                return
             
             if audio:
                 self.play_audio(audio)
@@ -627,6 +642,11 @@ class VADCallCallback(pj.CallCallback):
     def play_audio(self, audio_file):
         """播放音频"""
         try:
+            # 检查连接状态
+            if not self.connected:
+                print(f"  [播放] 通话已结束，取消播放")
+                return
+            
             info = self.call.info()
             
             # 停止旧播放器
