@@ -239,15 +239,26 @@ def input_thread_func(call_obj):
                     current_call = call_obj.get('call')
                     if current_call:
                         try:
+                            # 先检查呼叫是否有效
+                            if not current_call.is_valid():
+                                print("\n[错误] 呼叫已失效")
+                                continue
+                                
+                            info = current_call.info()
+                            # 检查呼叫是否还在活动状态
+                            if info.state != pj.CallState.CONFIRMED:
+                                print("\n[错误] 呼叫未在通话状态")
+                                continue
+                            
                             # 切换静音状态
                             call_obj['muted'] = not call_obj.get('muted', False)
                             if call_obj['muted']:
                                 # 断开麦克风
-                                pj.Lib.instance().conf_disconnect(0, current_call.info().conf_slot)
+                                pj.Lib.instance().conf_disconnect(0, info.conf_slot)
                                 print("\n[操作] 已静音")
                             else:
                                 # 连接麦克风
-                                pj.Lib.instance().conf_connect(0, current_call.info().conf_slot)
+                                pj.Lib.instance().conf_connect(0, info.conf_slot)
                                 print("\n[操作] 取消静音")
                         except Exception as e:
                             print(f"\n[错误] 静音操作失败: {e}")
@@ -256,6 +267,11 @@ def input_thread_func(call_obj):
                     current_call = call_obj.get('call')
                     if current_call:
                         try:
+                            # 先检查呼叫是否有效
+                            if not current_call.is_valid():
+                                print("\n[错误] 呼叫已失效")
+                                continue
+                                
                             info = current_call.info()
                             print("\n[通话信息]")
                             print(f"  状态: {info.state_text}")
@@ -414,9 +430,17 @@ def make_test_call(destination_number, country_code="62", call_timeout=60):
                     print(f"挂断失败: {e}")
                 break
             
-            # 检查呼叫是否结束
-            if not current_call or current_call.info().state == pj.CallState.DISCONNECTED:
-                print("\n呼叫已结束")
+            # 检查呼叫是否结束（安全检查）
+            try:
+                if not current_call or not current_call.is_valid():
+                    print("\n呼叫已失效")
+                    break
+                    
+                if current_call.info().state == pj.CallState.DISCONNECTED:
+                    print("\n呼叫已结束")
+                    break
+            except Exception as e:
+                print(f"\n呼叫状态检查异常: {e}")
                 break
             
             # 超时检查
@@ -448,12 +472,17 @@ def make_test_call(destination_number, country_code="62", call_timeout=60):
         
     finally:
         # 清理
-        if current_call and current_call.info().state != pj.CallState.DISCONNECTED:
-            print("\n[清理] 挂断呼叫...")
+        if current_call:
             try:
-                current_call.hangup()
-                time.sleep(1)
-            except Exception:
+                # 安全检查呼叫是否有效
+                if current_call.is_valid():
+                    info = current_call.info()
+                    if info.state != pj.CallState.DISCONNECTED:
+                        print("\n[清理] 挂断呼叫...")
+                        current_call.hangup()
+                        time.sleep(1)
+            except Exception as e:
+                print(f"[清理] 挂断异常: {e}")
                 pass
                 
         if lib:

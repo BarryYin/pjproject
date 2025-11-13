@@ -34,7 +34,7 @@ CONFIG = {
     'api_port': 8090,
     
     'openai_api_key': os.getenv('OPENAI_API_KEY', ''),
-    'ai_model': 'gpt-3.5-turbo',
+    'ai_model': 'gpt-4o-mini',
     
     'whisper_model': 'base',
     'whisper_device': 'cpu',
@@ -247,7 +247,7 @@ class TTSEngine:
             self.SpeechSynthesizer = SpeechSynthesizer
             
             # 设置API Key（从配置获取或使用默认）
-            self.api_key = os.getenv('DASHSCOPE_API_KEY', 'sk-ebf86b67058945fa827863a3742df0b0')
+            self.api_key = os.getenv('DASHSCOPE_API_KEY', 'sk-b20dbc29a6ab4ada8b4711d8b817f7cb')
             self.dashscope.api_key = self.api_key
             
             # 配置
