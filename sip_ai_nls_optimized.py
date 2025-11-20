@@ -39,9 +39,9 @@ CONFIG = {
     'temp_dir': '/home/henry/pjproject/temp_audio',
     
     # 阿里云NLS配置
-    'nls_akid': 'LTAI5tGtuuJyivveR3UFARYs',
-    'nls_akkey': 'aY32qhvLBpslrxwTUSO6tYlMscCitG',
-    'nls_appkey': 'dqAnq24vXe5lJUlq',
+    'nls_akid': 'LTAI5t5fvYrtRRZEDiWugwLT',
+    'nls_akkey': 'xcrscQ4DiKhX6aLxRo4qWEM1AD6b2k',
+    'nls_appkey': 'gtYJLzS47I0Dx1TO',
     'nls_tts_voice': 'indah',  # 印尼语女声
     
     # OpenAI配置
@@ -52,8 +52,14 @@ CONFIG = {
     'vad_aggressiveness': 1,
     'vad_frame_duration': 30,
     'vad_silence_frames': 15,
-    'vad_min_speech_frames': 3,
+    'vad_min_speech_frames': 10,             # 增加到10帧（300ms）- 过滤更短的语音
     'vad_max_speech_frames': 100,
+    
+    # 智能打断配置
+    'smart_interrupt_enabled': False,         # 暂时禁用智能打断（减少ASR调用）
+    'interrupt_min_frames': 15,               # 打断最少帧数（450ms）
+    'interrupt_check_semantic': False,        # 禁用LLM语义检查
+    'interrupt_semantic_threshold': 0.3,      # 语义相关度阈值
 }
 
 for d in [CONFIG['temp_dir'], CONFIG['recordings_dir']]:
@@ -141,7 +147,11 @@ class OptimizedNLSASREngine:
         self.recognizer = None  # 保持recognizer
         self.lock = threading.Lock()
         self.last_request_time = 0  # 上次请求时间
-        self.min_interval = 0.5  # 最小请求间隔（秒）
+        self.min_interval = 3.0  # 最小请求间隔（秒）- 增加到3秒避免限流
+        self.error_count = 0  # 错误计数
+        self.max_errors = 3  # 最大错误次数，超过则重建连接
+        self.last_rate_limit_time = 0  # 上次限流时间
+        self.rate_limit_backoff = 10.0  # 限流后的退避时间（秒）- 增加到10秒
         
         # 预获取Token
         print("  [ASR] 预获取Token...")
@@ -161,6 +171,14 @@ class OptimizedNLSASREngine:
             print(f"  [ASR] Token失败: {e}")
             return False
     
+    def _on_error(self, message, *args):
+        """错误回调 - 检测限流错误"""
+        print(f"  [ASR] ✗ 错误: {message}")
+        # 检查是否是限流错误
+        if message and "TOO_MANY_REQUESTS" in str(message):
+            print(f"  [ASR] ⚠ 触发限流，启动退避")
+            self.last_rate_limit_time = time.time()
+    
     def _create_recognizer(self):
         """创建recognizer（只创建一次）"""
         if self.recognizer:
@@ -172,7 +190,7 @@ class OptimizedNLSASREngine:
                 appkey=self.appkey,
                 on_start=lambda msg, *args: print("  [ASR] ✓ 已启动"),
                 on_completed=self._on_completed,
-                on_error=lambda msg, *args: print(f"  [ASR] ✗ 错误: {msg}"),
+                on_error=self._on_error,
                 on_close=lambda *args: print("  [ASR] ⊗ 关闭")
             )
             print("  [ASR] Recognizer创建成功")
@@ -196,13 +214,27 @@ class OptimizedNLSASREngine:
         
         self.completed = True
     
-    def transcribe(self, audio_file):
-        """快速识别 - 复用连接"""
+    def transcribe(self, audio_file, is_interrupt_check=False):
+        """快速识别 - 复用连接
+        
+        Args:
+            audio_file: 音频文件路径
+            is_interrupt_check: 是否是打断检查（如果是，使用更长的限流）
+        """
         with self.lock:
+            # 检查是否刚触发过限流，如果是则延长等待时间
+            time_since_rate_limit = time.time() - self.last_rate_limit_time
+            if time_since_rate_limit < self.rate_limit_backoff:
+                backoff_wait = self.rate_limit_backoff - time_since_rate_limit
+                print(f"  [ASR] 限流退避等待{backoff_wait:.1f}s...", end=" ")
+                time.sleep(backoff_wait)
+            
             # 限流：确保请求间隔
+            # 打断检查使用更长的间隔，避免过于频繁
+            min_interval = self.min_interval * 2 if is_interrupt_check else self.min_interval
             elapsed = time.time() - self.last_request_time
-            if elapsed < self.min_interval:
-                wait_time = self.min_interval - elapsed
+            if elapsed < min_interval:
+                wait_time = min_interval - elapsed
                 print(f"  [ASR] 限流等待{wait_time:.1f}s...", end=" ")
                 time.sleep(wait_time)
             
@@ -236,24 +268,38 @@ class OptimizedNLSASREngine:
                         enable_intermediate_result=False
                     )
                 except Exception as e:
-                    print(f"start失败: {e}, 重建recognizer")
+                    print(f"start失败: {e}, 重建")
                     self.recognizer = None
                     self._create_recognizer()
                     if not self.recognizer:
+                        self.error_count += 1
                         return ""
-                    self.recognizer.start(
-                        aformat="pcm",
-                        sample_rate=8000,
-                        enable_intermediate_result=False
-                    )
+                    
+                    # 重试start
+                    try:
+                        self.recognizer.start(
+                            aformat="pcm",
+                            sample_rate=8000,
+                            enable_intermediate_result=False
+                        )
+                    except Exception as e2:
+                        print(f"重试start失败: {e2}")
+                        self.error_count += 1
+                        return ""
                 
                 # 快速发送音频
-                chunk_size = 6400
-                for i in range(0, len(audio_data), chunk_size):
-                    self.recognizer.send_audio(audio_data[i:i+chunk_size])
-                
-                # 停止
-                self.recognizer.stop()
+                try:
+                    chunk_size = 6400
+                    for i in range(0, len(audio_data), chunk_size):
+                        self.recognizer.send_audio(audio_data[i:i+chunk_size])
+                    
+                    # 停止
+                    self.recognizer.stop()
+                except Exception as e:
+                    print(f"send/stop失败: {e}")
+                    self.error_count += 1
+                    # 不立即重建，等待下次检查error_count
+                    return ""
                 
                 # 等待结果（短超时）
                 timeout = 0
@@ -265,91 +311,58 @@ class OptimizedNLSASREngine:
                 
                 if self.result:
                     print(f"→ '{self.result}' ({elapsed:.1f}s)")
+                    self.error_count = 0  # 成功，重置错误计数
                 else:
                     print(f"→ 超时 ({elapsed:.1f}s)")
+                    self.error_count += 1
                 
                 return self.result
                 
             except Exception as e:
                 print(f"  [ASR] 异常: {e}")
-                # 重建recognizer
-                self.recognizer = None
-                self._create_recognizer()
+                self.error_count += 1
+                
+                # 只在错误次数过多时才重建recognizer
+                if self.error_count >= self.max_errors:
+                    print(f"  [ASR] 错误过多({self.error_count}次)，强制重建连接")
+                    self.recognizer = None
+                    self._create_recognizer()
+                    self.error_count = 0
+                
+                # 否则保持连接，不重建
                 return ""
 
 
-# ==================== 优化的NLS TTS引擎 ====================
+# ==================== DashScope TTS引擎 ====================
 
-class OptimizedNLSTTSEngine:
-    """优化的阿里云NLS TTS引擎 - 保持连接"""
+class DashScopeTTSEngine:
+    """阿里云DashScope TTS引擎 - 使用HTTP API"""
     
     def __init__(self):
-        self.token = None
-        self.appkey = CONFIG['nls_appkey']
-        self.voice = CONFIG['nls_tts_voice']
-        self.synthesizer = None
+        import dashscope
+        from dashscope.audio.tts import SpeechSynthesizer
+        
+        self.dashscope = dashscope
+        self.SpeechSynthesizer = SpeechSynthesizer
         self.lock = threading.Lock()
         self.last_request_time = 0  # 上次请求时间
-        self.min_interval = 0.5  # 最小请求间隔（秒）
+        self.min_interval = 1.0  # 最小请求间隔（秒）- DashScope限流较宽松
+        self.error_count = 0  # 错误计数
+        self.max_errors = 3  # 最大错误次数
         
-        # 预获取Token
-        print("  [TTS] 预获取Token...")
-        self.get_token()
+        # 设置API Key
+        self.api_key = "sk-b20dbc29a6ab4ada8b4711d8b817f7cb"
+        self.dashscope.api_key = self.api_key
         
-        # 预创建synthesizer
-        print("  [TTS] 预创建synthesizer...")
-        self._create_synthesizer()
-    
-    def get_token(self):
-        """获取Token"""
-        try:
-            self.token = getToken(CONFIG['nls_akid'], CONFIG['nls_akkey'])
-            print(f"  [TTS] Token: {self.token[:20]}...")
-            return True
-        except Exception as e:
-            print(f"  [TTS] Token失败: {e}")
-            return False
-    
-    def _create_synthesizer(self):
-        """创建synthesizer（只创建一次）"""
-        if self.synthesizer:
-            return
+        # TTS配置
+        self.model = 'sambert-indah-v1'  # 印尼语女声
+        self.sample_rate = 8000  # PJSIP使用8000Hz
+        self.format = 'wav'
         
-        try:
-            self.synthesizer = nls.NlsSpeechSynthesizer(
-                token=self.token,
-                appkey=self.appkey,
-                on_data=self._on_data,
-                on_completed=lambda msg, *args: self._on_completed(),
-                on_error=lambda msg, *args: print(f"  [TTS] ✗ 错误: {msg}"),
-                on_close=lambda *args: print("  [TTS] ⊗ 关闭")
-            )
-            print("  [TTS] Synthesizer创建成功")
-        except Exception as e:
-            print(f"  [TTS] 创建失败: {e}")
-            self.synthesizer = None
-    
-    def _on_data(self, data, *args):
-        """数据回调"""
-        if self.audio_file:
-            self.audio_file.write(data)
-    
-    def _on_completed(self):
-        """完成回调"""
-        if self.audio_file:
-            try:
-                self.audio_file.flush()  # 确保数据写入
-                self.audio_file.close()
-                self.audio_file = None
-                print("  [TTS] ✓ 完成（文件已关闭）")
-            except Exception as e:
-                print(f"  [TTS] ⚠ 关闭文件错误: {e}")
-        else:
-            print("  [TTS] ✓ 完成（无文件）")
-        self.completed = True
+        print(f"  [TTS] DashScope引擎初始化完成")
     
     def synthesize(self, text):
-        """快速合成 - 复用连接"""
+        """使用DashScope合成语音"""
         with self.lock:
             # 限流：确保请求间隔
             elapsed = time.time() - self.last_request_time
@@ -359,12 +372,6 @@ class OptimizedNLSTTSEngine:
                 time.sleep(wait_time)
             
             if not text or not text.strip():
-                return None
-            
-            if not self.synthesizer:
-                self._create_synthesizer()
-            
-            if not self.synthesizer:
                 return None
             
             try:
@@ -377,48 +384,35 @@ class OptimizedNLSTTSEngine:
                 
                 print(f"  [TTS] 文本: '{text[:30]}...'", end=" ")
                 
-                # 重置状态
-                self.audio_file = open(output_file, 'wb')
-                self.completed = False
-                
-                # 开始合成（复用WebSocket）
-                self.synthesizer.start(
+                # 调用DashScope API
+                result = self.SpeechSynthesizer.call(
+                    model=self.model,
                     text=text,
-                    voice=self.voice,
-                    aformat="wav",
-                    sample_rate=8000,
-                    volume=50,
-                    speech_rate=0
+                    sample_rate=self.sample_rate,
+                    format=self.format
                 )
-                
-                # 等待完成（短超时）
-                timeout = 0
-                while not self.completed and timeout < 100:  # 10秒
-                    time.sleep(0.1)
-                    timeout += 1
                 
                 elapsed = time.time() - start_time
                 
-                # 检查文件
-                if os.path.exists(output_file):
+                # 检查结果
+                if result.get_audio_data() is not None:
+                    # 写入文件
+                    with open(output_file, 'wb') as f:
+                        f.write(result.get_audio_data())
+                    
                     size = os.path.getsize(output_file)
-                    if size > 0:
-                        print(f"→ {size}字节 ({elapsed:.1f}s)")
-                        return output_file
-                    else:
-                        print(f"→ 文件为空 ({elapsed:.1f}s)")
-                        return None
+                    print(f"→ {size}字节 ({elapsed:.1f}s)")
+                    self.error_count = 0  # 成功，重置错误计数
+                    return output_file
                 else:
-                    print(f"→ 文件不存在 ({elapsed:.1f}s)")
+                    print(f"→ 无音频数据 ({elapsed:.1f}s)")
+                    self.error_count += 1
                     return None
                     
             except Exception as e:
-                print(f"  [TTS] 异常: {e}")
-                # 重建synthesizer
-                if self.audio_file:
-                    self.audio_file.close()
-                self.synthesizer = None
-                self._create_synthesizer()
+                elapsed = time.time() - start_time
+                print(f"  [TTS] 异常: {e} ({elapsed:.1f}s)")
+                self.error_count += 1
                 return None
 
 
@@ -491,6 +485,99 @@ class RealtimeWavReader:
 
 # ==================== AI对话回调 ====================
 
+class SmartInterruptChecker:
+    """智能打断检查器 - 使用LLM判断是否应该打断"""
+    
+    def __init__(self):
+        self.interrupt_keywords = {
+            # 印尼语常见无意义词
+            'filler': ['eh', 'em', 'um', 'uh', 'ah', 'hmm', 'hm', 'mm'],
+            # 印尼语简短回应
+            'short_response': ['ya', 'iya', 'oh', 'ok', 'oke', 'baik', 'tidak', 'nggak'],
+        }
+    
+    def should_interrupt(self, text, is_playing=False):
+        """
+        判断是否应该打断当前播放
+        
+        策略：
+        1. 长度检查 - 太短直接忽略
+        2. 关键词检查 - 无意义词/简短回应不打断
+        3. LLM语义检查 - 判断是否有真实打断意图
+        
+        返回: (should_interrupt: bool, reason: str)
+        """
+        if not text or not text.strip():
+            return False, "空文本"
+        
+        text_lower = text.lower().strip()
+        
+        # 策略1：长度检查（少于3个字符，可能是"嗯"、"哦"等）
+        if len(text_lower) <= 2:
+            return False, f"太短({len(text_lower)}字符)"
+        
+        # 策略2：关键词过滤
+        # 检查是否是填充词
+        for filler in self.interrupt_keywords['filler']:
+            if text_lower == filler or text_lower.startswith(filler + ' '):
+                return False, f"填充词({text_lower})"
+        
+        # 检查是否是单独的简短回应
+        words = text_lower.split()
+        if len(words) == 1 and words[0] in self.interrupt_keywords['short_response']:
+            return False, f"简短回应({words[0]})"
+        
+        # 如果不在播放中，不需要打断判断
+        if not is_playing:
+            return True, "非播放中"
+        
+        # 策略3：LLM语义检查（可选）
+        if CONFIG['interrupt_check_semantic']:
+            return self._check_semantic_interrupt(text)
+        
+        # 默认：允许打断
+        return True, "通过基本检查"
+    
+    def _check_semantic_interrupt(self, text):
+        """使用LLM进行语义检查"""
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=CONFIG['openai_api_key'])
+            
+            # 快速判断：是否是有意义的打断
+            prompt = f"""Analyze if this user input should interrupt the current AI speech.
+
+User said: "{text}"
+
+Reply ONLY with one word:
+- "YES" if: user asks a NEW question, makes a NEW statement, or clearly wants to interrupt
+- "NO" if: just acknowledgment (eh, um, ya, oke), background noise, or simple response
+
+Answer:"""
+            
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=5,
+                temperature=0
+            )
+            
+            answer = response.choices[0].message.content.strip().upper()
+            
+            if answer.startswith('YES'):
+                return True, "LLM判断:有打断意图"
+            elif answer.startswith('NO'):
+                return False, f"LLM判断:无打断意图({text})"
+            else:
+                # LLM返回不明确，保守起见允许打断
+                return True, f"LLM不确定({answer})"
+        
+        except Exception as e:
+            # LLM调用失败，回退到允许打断
+            print(f"  [打断检查] LLM失败: {e}")
+            return True, "LLM失败，允许打断"
+
+
 class AIConversationCallback(pj.CallCallback):
     """AI对话回调"""
     
@@ -504,10 +591,13 @@ class AIConversationCallback(pj.CallCallback):
         self.vad_thread = None
         self.vad_running = False
         
-        # 使用优化版引擎
+        # 使用混合引擎：NLS ASR + DashScope TTS
         self.asr = OptimizedNLSASREngine()
-        self.tts = OptimizedNLSTTSEngine()
+        self.tts = DashScopeTTSEngine()
         self.dialogue = DialogueEngine()
+        
+        # 智能打断检查器
+        self.interrupt_checker = SmartInterruptChecker()
         
         self.recorder = None
         self.recorder_id = None
@@ -519,6 +609,10 @@ class AIConversationCallback(pj.CallCallback):
         self.play_running = False
         self.current_player = None  # 当前播放器
         self.current_player_slot = None
+        
+        # 打断缓冲区 - 存储检测到说话时的音频，用于快速ASR判断
+        self.interrupt_buffer = []
+        self.interrupt_buffer_lock = threading.Lock()
     
     def on_state(self):
         """状态变化"""
@@ -533,13 +627,12 @@ class AIConversationCallback(pj.CallCallback):
                 self.start_vad_recording()
                 
             elif info.state == pj.CallState.DISCONNECTED:
+                print("\n[状态] >>> 通话已结束")
+                # 先停止所有线程和清理资源（此时connected还是True）
+                self.stop_vad_recording()
+                # 最后设置connected为False
                 with self.lock:
                     self.connected = False
-                print("\n[状态] >>> 通话已结束")
-                # 立即清理播放器，避免通话结束后还在操作
-                self.stop_current_playback()
-                # 停止录音和线程
-                self.stop_vad_recording()
         except:
             pass
     
@@ -588,6 +681,9 @@ class AIConversationCallback(pj.CallCallback):
     def stop_vad_recording(self):
         """停止录音"""
         try:
+            # 先清理当前播放
+            self.stop_current_playback()
+            
             # 停止VAD线程
             self.vad_running = False
             if self.vad_thread:
@@ -598,17 +694,27 @@ class AIConversationCallback(pj.CallCallback):
             if self.play_thread:
                 self.play_thread.join(timeout=2)
             
+            # 断开录音器连接（安全检查）
             if self.recorder_id is not None:
                 try:
-                    pj.Lib.instance().conf_disconnect(self.call.info().conf_slot, self.recorder_id)
-                except:
+                    # 检查通话是否还有效
+                    if self.call.is_valid():
+                        call_info = self.call.info()
+                        # 检查conf_slot是否有效（>= 0）
+                        if call_info.conf_slot >= 0 and self.recorder_id >= 0:
+                            pj.Lib.instance().conf_disconnect(call_info.conf_slot, self.recorder_id)
+                except Exception as e:
+                    # 忽略断开连接的错误
                     pass
             
+            # 销毁录音器
             if self.recorder:
                 try:
                     pj.Lib.instance().recorder_destroy(self.recorder)
                 except:
                     pass
+                self.recorder = None
+                self.recorder_id = None
             
             print(f"[录音] 已保存")
         except:
@@ -640,12 +746,39 @@ class AIConversationCallback(pj.CallCallback):
                         if new_data and self.wav_reader.last_pos > 44:
                             result = self.vad.process_audio(new_data)
                             
-                            # 检测到说话：打断当前播放
-                            if self.vad.is_speaking and self.current_player and self.connected:
-                                print("  [打断] 检测到说话，停止播放")
-                                self.stop_current_playback()
+                            # 智能打断逻辑
+                            if CONFIG['smart_interrupt_enabled']:
+                                # 检测到说话开始
+                                if self.vad.is_speaking:
+                                    # 累积音频帧
+                                    with self.interrupt_buffer_lock:
+                                        self.interrupt_buffer.extend(self.vad.speech_frames[-5:])  # 最后5帧
+                                    
+                                    # 如果正在播放 且 累积足够长度，进行打断检查
+                                    if self.current_player and self.connected:
+                                        frame_count = len(self.vad.speech_frames)
+                                        
+                                        # 达到最小帧数才检查打断
+                                        if frame_count >= CONFIG['interrupt_min_frames']:
+                                            # 只检查一次（避免重复）
+                                            if not hasattr(self, '_interrupt_checked'):
+                                                self._interrupt_checked = True
+                                                self.check_smart_interrupt()
+                            else:
+                                # 传统打断：立即打断
+                                if self.vad.is_speaking and self.current_player and self.connected:
+                                    print("  [打断] 检测到说话，停止播放")
+                                    self.stop_current_playback()
                             
+                            # 语音结束，处理完整句子
                             if result and result[0] == 'speech_complete' and self.connected:
+                                # 重置打断检查标志
+                                if hasattr(self, '_interrupt_checked'):
+                                    delattr(self, '_interrupt_checked')
+                                # 清空打断缓冲区
+                                with self.interrupt_buffer_lock:
+                                    self.interrupt_buffer = []
+                                # 处理语音
                                 self.process_speech(result[1])
                     
                     time.sleep(0.05)
@@ -653,6 +786,71 @@ class AIConversationCallback(pj.CallCallback):
                     time.sleep(0.5)
         except Exception as e:
             print(f"[VAD] 线程错误: {e}")
+    
+    def check_smart_interrupt(self):
+        """智能打断检查 - 在独立线程中运行"""
+        thread = threading.Thread(target=self._check_smart_interrupt_thread, daemon=True)
+        thread.start()
+    
+    def _check_smart_interrupt_thread(self):
+        """智能打断检查线程"""
+        try:
+            # 检查是否还在播放
+            if not self.current_player:
+                print("  [打断检查] 播放已结束，跳过")
+                return
+            
+            # 获取当前缓冲区的音频
+            with self.interrupt_buffer_lock:
+                if not self.interrupt_buffer:
+                    print("  [打断检查] 缓冲区为空")
+                    return
+                audio_data = b''.join(self.interrupt_buffer[-15:])  # 最后450ms音频
+            
+            # 检查音频长度是否足够
+            if len(audio_data) < 8000:  # 少于0.5秒，太短
+                print("  [打断检查] 音频太短，跳过")
+                return
+            
+            # 快速ASR识别（标记为打断检查，使用更长的限流）
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            temp_file = os.path.join(CONFIG['temp_dir'], f"interrupt_{ts}.wav")
+            
+            with wave.open(temp_file, 'wb') as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(8000)
+                wf.writeframes(audio_data)
+            
+            print("  [打断检查] ASR中...", end=" ")
+            text = self.asr.transcribe(temp_file, is_interrupt_check=True)
+            
+            if not text:
+                print("无文本")
+                return
+            
+            print(f"'{text}'", end=" ")
+            
+            # 再次检查是否还在播放
+            if not self.current_player:
+                print("→ 播放已结束")
+                return
+            
+            # 使用智能检查器判断
+            should_interrupt, reason = self.interrupt_checker.should_interrupt(
+                text, 
+                is_playing=(self.current_player is not None)
+            )
+            
+            if should_interrupt:
+                print(f"→ 打断! ({reason})")
+                self.stop_current_playback()
+            else:
+                print(f"→ 忽略 ({reason})")
+                # 不打断，继续播放
+        
+        except Exception as e:
+            print(f"  [打断检查] 错误: {e}")
     
     def process_speech(self, audio_data):
         """处理语音 - 独立线程"""
@@ -829,9 +1027,18 @@ def main():
     phone_number = sys.argv[1].strip()
     
     print("=" * 70)
-    print("  AI对话系统 - NLS优化版（长连接）")
+    print("  AI对话系统 - 混合引擎版")
     print("=" * 70)
-    print(f"  特性: WebSocket长连接复用，极速ASR/TTS")
+    print(f"  ASR引擎: 阿里云NLS (WebSocket)")
+    print(f"  TTS引擎: 阿里云DashScope (HTTP)")
+    print(f"  回声消除: 已启用 (400ms尾长)")
+    
+    if CONFIG['smart_interrupt_enabled']:
+        semantic_status = "启用" if CONFIG['interrupt_check_semantic'] else "禁用"
+        print(f"  智能打断: 已启用 (最少{CONFIG['interrupt_min_frames']}帧, LLM语义:{semantic_status})")
+    else:
+        print(f"  智能打断: 禁用（传统模式）")
+    
     print("=" * 70)
     
     if not CONFIG['openai_api_key']:
@@ -847,7 +1054,22 @@ def main():
         media_cfg = pj.MediaConfig()
         media_cfg.clock_rate = 8000
         media_cfg.audio_frame_ptime = 20
-        media_cfg.ec_tail_len = 0
+        
+        # 回声消除配置
+        # ec_tail_len: 回声尾长（毫秒），建议200-800ms
+        # 0 = 禁用回声消除
+        # 200 = 适用于近距离对话
+        # 400 = 标准配置，适用于大多数情况
+        # 800 = 适用于长回声延迟的环境
+        media_cfg.ec_tail_len = 400
+        
+        # ec_options: 回声消除选项
+        # 0 = 默认（使用Speex AEC）
+        # 1 = 使用WebRTC AEC（更好的效果，但需要编译时启用）
+        media_cfg.ec_options = 0
+        
+        # 禁用VAF（Voice Activity Filter），因为我们用WebRTC VAD
+        media_cfg.no_vad = True
         
         log_cfg = pj.LogConfig()
         log_cfg.level = CONFIG['log_level']

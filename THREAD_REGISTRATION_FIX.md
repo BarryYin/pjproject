@@ -85,7 +85,7 @@ def some_thread_function(self):
         print(f"线程错误: {e}")
 ```
 
-## 额外修复：通话结束后的状态检查
+## 修复2：通话结束后的状态检查
 
 ### 问题2：通话结束后仍在处理
 
@@ -140,6 +140,61 @@ if tts_file and self.connected:
 ```python
 if self.vad.is_speaking and self.current_player and self.connected:
     self.stop_current_playback()
+```
+
+## 修复3：录音器断开连接的安全性
+
+### 问题3：通话结束时录音器断开失败
+
+```
+[状态] DISCONNECTED
+[状态] >>> 通话已结束
+python3: ../src/pjsua-lib/pjsua_aud.c:1133: pjsua_conf_disconnect: Assertion `source >= 0 && sink >= 0' failed.
+```
+
+### 原因
+
+- `stop_vad_recording()` 尝试断开录音器
+- 获取 `call.info().conf_slot` 时通话可能已无效
+- 或 conf_slot 已经变成负值（无效）
+
+### 解决方案
+
+1. **改进清理顺序** - 先清理资源再设置状态
+```python
+elif info.state == pj.CallState.DISCONNECTED:
+    print("\n[状态] >>> 通话已结束")
+    # 先停止所有线程和清理资源（此时connected还是True）
+    self.stop_vad_recording()
+    # 最后设置connected为False
+    with self.lock:
+        self.connected = False
+```
+
+2. **安全的录音器断开**
+```python
+if self.recorder_id is not None:
+    try:
+        # 检查通话是否还有效
+        if self.call.is_valid():
+            call_info = self.call.info()
+            # 检查conf_slot是否有效（>= 0）
+            if call_info.conf_slot >= 0 and self.recorder_id >= 0:
+                pj.Lib.instance().conf_disconnect(call_info.conf_slot, self.recorder_id)
+    except Exception as e:
+        # 忽略断开连接的错误
+        pass
+```
+
+3. **清理播放器后再清理录音器**
+```python
+def stop_vad_recording(self):
+    # 先清理当前播放
+    self.stop_current_playback()
+    
+    # 停止VAD线程
+    self.vad_running = False
+    # ...
 ```
 
 ## 测试结果
