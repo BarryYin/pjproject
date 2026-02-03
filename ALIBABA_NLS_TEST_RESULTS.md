@@ -3,8 +3,8 @@
 ## 测试配置
 
 - **AccessKey ID**: <ALI_NLS_AKID> (从环境变量加载)
-- **AccessKey Secret**: aY32qhvLBpslrxwTUSO6tYlMscCitG
-- **AppKey**: dqAnq24vXe5lJUlq
+- **AccessKey Secret**: <ALI_NLS_AKKEY> (从环境变量加载)
+- **AppKey**: <ALI_NLS_APPKEY> (从环境变量加载)
 - **SDK**: alibabacloud-nls-python-sdk
 
 ## 测试结果

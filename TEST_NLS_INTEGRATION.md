@@ -341,7 +341,7 @@ ls -lh temp_audio/tts_nls_*.wav | tail -5
 # 测试Token API
 curl "https://nls-meta.cn-shanghai.aliyuncs.com/token" \
   -d "AccessKeyId=$(echo $ALI_NLS_AKID)" \
-  -d "AccessKeySecret=aY32qhvLBpslrxwTUSO6tYlMscCitG"
+  -d "AccessKeySecret=$(echo $ALI_NLS_AKKEY)"
 ```
 
 ---
