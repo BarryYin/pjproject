@@ -42,7 +42,7 @@
 
 #### OpenAI API Key
 ```
-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
+<OPENAI_API_KEY>
 ```
 
 #### 阿里云DashScope API Key
@@ -108,7 +108,7 @@ SIP端口: 5060
 cd /home/henry/pjproject
 
 # 设置OpenAI API Key
-export OPENAI_API_KEY="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"
+export OPENAI_API_KEY="<OPENAI_API_KEY>"
 
 # 设置DashScope API Key（已在代码中硬编码，可选）
 export DASHSCOPE_API_KEY="sk-ebf86b67058945fa827863a3742df0b0"
@@ -338,7 +338,7 @@ sudo apt-get install pulseaudio
 echo $OPENAI_API_KEY
 
 # 重新设置
-export OPENAI_API_KEY="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"
+export OPENAI_API_KEY="<OPENAI_API_KEY>"
 ```
 
 ### 3. DashScope TTS失败
@@ -458,7 +458,7 @@ echo "DASHSCOPE_API_KEY=your-key" >> .env
 
 2. **测试AI对话**
    ```bash
-   export OPENAI_API_KEY="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"
+   export OPENAI_API_KEY="<OPENAI_API_KEY>"
    python3 sip_ai_with_webrtc_vad.py
    ```
 

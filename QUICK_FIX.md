@@ -52,7 +52,7 @@ sleep 3
 
 # 3. 重新启动
 cd /home/henry/pjproject
-export OPENAI_API_KEY='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'
+export OPENAI_API_KEY='<OPENAI_API_KEY>'
 python3 sip_ai_conversation.py
 ```
 

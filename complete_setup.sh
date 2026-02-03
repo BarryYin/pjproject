@@ -44,7 +44,7 @@ if grep -q "OPENAI_API_KEY" ~/.bashrc; then
     echo "✓ API Key 已在 ~/.bashrc 中"
 else
     echo "添加 API Key 到 ~/.bashrc..."
-    echo "export OPENAI_API_KEY='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'" >> ~/.bashrc
+    echo "# 从环境变量加载: export OPENAI_API_KEY='<OPENAI_API_KEY>'" >> ~/.bashrc
     echo "✓ API Key 已保存"
 fi
 

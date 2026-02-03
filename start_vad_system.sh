@@ -15,8 +15,11 @@ echo ""
 
 # 设置环境
 echo "2. 设置环境..."
-export OPENAI_API_KEY='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'
-echo "   ✓ API Key已设置"
+if [ -z "$OPENAI_API_KEY" ]; then
+    echo "   ⚠ 请设置 OPENAI_API_KEY 环境变量"
+else
+    echo "   ✓ API Key已设置"
+fi
 echo ""
 
 # 启动

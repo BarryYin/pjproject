@@ -13,9 +13,11 @@ import nls
 from nls.token import getToken
 
 # 配置信息
-AKID = "LTAI5tGtuuJyivveR3UFARYs"
-AKKEY = "aY32qhvLBpslrxwTUSO6tYlMscCitG"
-APPKEY = "dqAnq24vXe5lJUlq"
+# 使用环境变量加载凭证
+import os
+AKID = os.getenv('ALI_NLS_AKID', '')
+AKKEY = os.getenv('ALI_NLS_AKKEY', '')
+APPKEY = os.getenv('ALI_NLS_APPKEY', '')
 
 def get_token():
     """获取访问token"""

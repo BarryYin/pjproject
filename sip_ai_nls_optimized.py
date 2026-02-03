@@ -38,10 +38,10 @@ CONFIG = {
     'recordings_dir': '/home/henry/pjproject/recordings',
     'temp_dir': '/home/henry/pjproject/temp_audio',
     
-    # 阿里云NLS配置
-    'nls_akid': 'LTAI5t5fvYrtRRZEDiWugwLT',
-    'nls_akkey': 'xcrscQ4DiKhX6aLxRo4qWEM1AD6b2k',
-    'nls_appkey': 'gtYJLzS47I0Dx1TO',
+    # 阿里云NLS配置 - 使用环境变量
+    'nls_akid': os.getenv('ALI_NLS_AKID', ''),
+    'nls_akkey': os.getenv('ALI_NLS_AKKEY', ''),
+    'nls_appkey': os.getenv('ALI_NLS_APPKEY', ''),
     'nls_tts_voice': 'indah',  # 印尼语女声
     
     # OpenAI配置

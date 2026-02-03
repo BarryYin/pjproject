@@ -25,7 +25,7 @@ echo "这会下载Whisper模型，需要2-3分钟..."
 echo "请耐心等待，这是一次性的！"
 echo ""
 
-export OPENAI_API_KEY='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'
+# 从环境变量加载: export OPENAI_API_KEY='<OPENAI_API_KEY>'
 
 python3 /home/henry/pjproject/download_models.py
 

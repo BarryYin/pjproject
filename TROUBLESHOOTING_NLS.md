@@ -122,7 +122,7 @@ import sys
 sys.path.insert(0, 'alibabacloud-nls-python-sdk')
 from nls.token import getToken
 
-token = getToken('LTAI5tGtuuJyivveR3UFARYs', 'aY32qhvLBpslrxwTUSO6tYlMscCitG')
+token = getToken(os.getenv('ALI_NLS_AKID', ''), os.getenv('ALI_NLS_AKKEY', ''))
 print(f"Token: {token[:50]}...")
 EOF
 ```

@@ -37,9 +37,9 @@
 
 ```python
 CONFIG = {
-    'nls_akid': 'LTAI5tGtuuJyivveR3UFARYs',
-    'nls_akkey': 'aY32qhvLBpslrxwTUSO6tYlMscCitG',
-    'nls_appkey': 'dqAnq24vXe5lJUlq',
+    'nls_akid': os.getenv('ALI_NLS_AKID', ''),
+    'nls_akkey': os.getenv('ALI_NLS_AKKEY', ''),
+    'nls_appkey': os.getenv('ALI_NLS_APPKEY', ''),
     'nls_tts_voice': 'indah',  # 印尼语女声
 }
 ```

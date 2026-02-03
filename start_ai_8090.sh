@@ -6,11 +6,11 @@ echo "  AI对话系统 - 启动 (端口8090)"
 echo "=========================================="
 echo ""
 
-# 设置API Key
+# 设置API Key - 从环境变量加载
 if [ -z "$OPENAI_API_KEY" ]; then
     source ~/.bashrc 2>/dev/null
     if [ -z "$OPENAI_API_KEY" ]; then
-        export OPENAI_API_KEY='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'
+        echo "⚠ 警告: OPENAI_API_KEY 未设置"
     fi
 fi
 

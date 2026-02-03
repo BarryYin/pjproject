@@ -10,8 +10,8 @@
 
 ### ASR（NLS）
 ```
-AccessKey ID: LTAI5t5fvYrtRRZEDiWugwLT
-AppKey: gtYJLzS47I0Dx1TO
+AccessKey ID: <ALI_NLS_AKID> (从环境变量加载)
+AppKey: <ALI_NLS_APPKEY> (从环境变量加载)
 限流间隔: 3秒
 限流退避: 10秒
 ```

@@ -9,7 +9,7 @@ sleep 1
 
 # 设置环境并启动
 cd /home/henry/pjproject
-export OPENAI_API_KEY='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'
+# 从环境变量加载: export OPENAI_API_KEY='<OPENAI_API_KEY>'
 
 echo ""
 echo "系统启动后，输入: call <号码>"

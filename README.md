@@ -20,7 +20,7 @@
 
 ```bash
 # OpenAI API Key
-export OPENAI_API_KEY="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"
+export OPENAI_API_KEY="<OPENAI_API_KEY>"
 
 # 阿里云DashScope API Key（可选，已在代码中配置）
 export DASHSCOPE_API_KEY="sk-ebf86b67058945fa827863a3742df0b0"
@@ -52,7 +52,7 @@ SIP端口: 5060
 cd /home/henry/pjproject
 
 # 1. 设置API Key
-export OPENAI_API_KEY="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"
+export OPENAI_API_KEY="<OPENAI_API_KEY>"
 
 # 2. 启动AI对话系统
 python3 sip_ai_with_webrtc_vad.py
@@ -319,7 +319,7 @@ DASHSCOPE_API_KEY = "sk-ebf86b67058945fa827863a3742df0b0"
 echo $OPENAI_API_KEY
 
 # 重新设置
-export OPENAI_API_KEY="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"
+export OPENAI_API_KEY="<OPENAI_API_KEY>"
 ```
 
 ### Q3: DashScope TTS失败
@@ -426,7 +426,7 @@ netstat -tuln | grep 8090
 cd /home/henry/pjproject
 
 # 1. 设置环境变量
-export OPENAI_API_KEY="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"
+export OPENAI_API_KEY="<OPENAI_API_KEY>"
 
 # 可选：设置DashScope Key（已在代码中配置）
 export DASHSCOPE_API_KEY="sk-ebf86b67058945fa827863a3742df0b0"
@@ -500,7 +500,7 @@ ffplay /home/henry/pjproject/recordings/call_*.wav
 cd /home/henry/pjproject
 
 # 设置API Key
-export OPENAI_API_KEY="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"
+export OPENAI_API_KEY="<OPENAI_API_KEY>"
 
 # 启动系统
 python3 sip_ai_with_webrtc_vad.py

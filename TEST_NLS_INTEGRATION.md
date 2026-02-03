@@ -87,8 +87,8 @@ import sys
 sys.path.insert(0, 'alibabacloud-nls-python-sdk')
 from nls.token import getToken
 
-AKID = 'LTAI5tGtuuJyivveR3UFARYs'
-AKKEY = 'aY32qhvLBpslrxwTUSO6tYlMscCitG'
+AKID = os.getenv('ALI_NLS_AKID', '')
+AKKEY = os.getenv('ALI_NLS_AKKEY', '')
 
 try:
     token = getToken(AKID, AKKEY)
@@ -340,7 +340,7 @@ ls -lh temp_audio/tts_nls_*.wav | tail -5
 ```bash
 # 测试Token API
 curl "https://nls-meta.cn-shanghai.aliyuncs.com/token" \
-  -d "AccessKeyId=LTAI5tGtuuJyivveR3UFARYs" \
+  -d "AccessKeyId=$(echo $ALI_NLS_AKID)" \
   -d "AccessKeySecret=aY32qhvLBpslrxwTUSO6tYlMscCitG"
 ```
 

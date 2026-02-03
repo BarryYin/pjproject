@@ -9,9 +9,10 @@ from nls.token import getToken
 import time
 import os
 
-AKID = 'LTAI5tGtuuJyivveR3UFARYs'
-AKKEY = 'aY32qhvLBpslrxwTUSO6tYlMscCitG'
-APPKEY = 'dqAnq24vXe5lJUlq'
+# 使用环境变量，未设置时为空字符串
+AKID = os.getenv('ALI_NLS_AKID', '')
+AKKEY = os.getenv('ALI_NLS_AKKEY', '')
+APPKEY = os.getenv('ALI_NLS_APPKEY', '')
 
 print("获取Token...")
 token = getToken(AKID, AKKEY)

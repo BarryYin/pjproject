@@ -13,10 +13,13 @@ print("测试系统启动 - 逐步检查")
 print("="*70)
 print()
 
-# 设置API Key
-os.environ['OPENAI_API_KEY'] = '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'
-
-# 1. 测试导入
+# 设置API Key - 使用环境变量（未设置则为空）
+api_key = os.getenv('OPENAI_API_KEY', '')
+if api_key:
+    os.environ['OPENAI_API_KEY'] = api_key
+else:
+    print("⚠ OPENAI_API_KEY 未设置")
+print()
 print("1️⃣  测试导入...")
 try:
     import pjsua as pj

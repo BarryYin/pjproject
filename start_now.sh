@@ -7,7 +7,7 @@ echo "================================"
 echo ""
 
 # 设置环境变量
-export OPENAI_API_KEY='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'
+# 从环境变量加载: export OPENAI_API_KEY='<OPENAI_API_KEY>'
 
 cd /home/henry/pjproject
 

@@ -43,9 +43,9 @@ export OPENAI_API_KEY='sk-proj-XCMmLidU_4KNH5bD...'
 ### 阿里云NLS
 
 ```python
-AKID    = 'LTAI5tGtuuJyivveR3UFARYs'
-AKKEY   = 'aY32qhvLBpslrxwTUSO6tYlMscCitG'
-AppKey  = 'dqAnq24vXe5lJUlq'
+AKID    = os.getenv('ALI_NLS_AKID', '')
+AKKEY   = os.getenv('ALI_NLS_AKKEY', '')
+APPKEY  = os.getenv('ALI_NLS_APPKEY', '')
 Voice   = 'indah'  # 印尼语女声
 ```
 
