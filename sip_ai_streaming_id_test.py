@@ -289,10 +289,11 @@ class StreamingAudioPort(pj.AudioMediaPort):
 
 # ==================== 呼叫回调 ====================
 class CallCallback(pj.Call):
-    def __init__(self, acc, call_id=pj.PJSUA_INVALID_ID, hangup_callback=None):
+    def __init__(self, acc, call_id=pj.PJSUA_INVALID_ID, hangup_callback=None, clear_on_disconnect_callback=None):
         pj.Call.__init__(self, acc, call_id)
         self.acc = acc
         self.hangup_callback = hangup_callback
+        self.clear_on_disconnect_callback = clear_on_disconnect_callback
         self.connected = False
         self.audio_port = None
         self.audio_setup_done = False
@@ -318,7 +319,10 @@ class CallCallback(pj.Call):
             pj.PJSIP_INV_STATE_DISCONNECTED: "DISCONNECTED",
         }.get(ci.state, str(ci.state))
         print(f"\n[呼叫] {state_name}")
-        if ci.state == pj.PJSIP_INV_STATE_CONFIRMED:
+        if ci.state == pj.PJSIP_INV_STATE_EARLY:
+            # 振铃/早期媒体，不播欢迎语，等 CONFIRMED 再建媒体
+            print("  振铃中，等待对方接听...")
+        elif ci.state == pj.PJSIP_INV_STATE_CONFIRMED:
             self.connected = True
             self.call_start_time = time.time()
             print("  ✓ 通话已接通")
@@ -342,28 +346,56 @@ class CallCallback(pj.Call):
             if self.streaming_asr:
                 self.streaming_asr.stop()
             print("  通话已结束")
-            # 通知系统清空 current_call，否则下次 call 会误报「已有通话中」
-            if self.hangup_callback:
+            # 挂断原因（与 sip_test_call_indonesia 一致）
+            try:
+                code = getattr(ci, 'lastStatusCode', 0) or 0
+                reason = getattr(ci, 'lastReason', '') or ''
+                if code == 200:
+                    print("  原因: 正常挂断")
+                elif code == 486:
+                    print("  原因: 用户忙")
+                elif code == 487:
+                    print("  原因: 请求已取消")
+                elif code == 480:
+                    print("  原因: 暂时无法接通")
+                elif code == 404:
+                    print("  原因: 号码不存在")
+                elif code == 403:
+                    print("  原因: 禁止呼叫")
+                elif code == 408:
+                    print("  原因: 请求超时")
+                elif code == 603:
+                    print("  原因: 拒绝接听")
+                else:
+                    print(f"  原因: {reason}" if reason else f"  原因: 代码 {code}")
+            except Exception:
+                pass
+            # 仅清空 current_call，不调 hangup()，避免对已终止会话再发 BYE 报错 (Invalid call_id / ESESSIONTERMINATED)
+            if self.clear_on_disconnect_callback:
                 def _clear_system_call():
                     try:
                         pj.Endpoint.instance().libRegisterThread("disconnected_clear")
                     except Exception:
                         pass
-                    self.hangup_callback()
+                    self.clear_on_disconnect_callback()
                 threading.Thread(target=_clear_system_call, daemon=True).start()
 
     def onCallMediaState(self, prm):
         ci = self.getInfo()
         for i, mi in enumerate(ci.media):
             if mi.type == pj.PJMEDIA_TYPE_AUDIO and mi.status == pj.PJSUA_CALL_MEDIA_ACTIVE:
+                # 仅在接通(CONFIRMED)时建媒体并播欢迎语；振铃(EARLY)时只提示，不建媒体
+                if ci.state == pj.PJSIP_INV_STATE_EARLY:
+                    print(f"  [媒体] 音频已激活（振铃/早期媒体，等待接听）")
+                    continue
+                if ci.state != pj.PJSIP_INV_STATE_CONFIRMED:
+                    continue
                 print(f"  [媒体] 音频已激活")
                 if not self.audio_setup_done:
+                    self.audio_setup_done = True
                     threading.Thread(target=self.setup_audio, daemon=True).start()
 
     def setup_audio(self):
-        if self.audio_setup_done:
-            return
-        self.audio_setup_done = True
         try:
             pj.Endpoint.instance().libRegisterThread("setup_audio_thread")
         except:
@@ -647,7 +679,8 @@ class PJsua2StreamingSystem:
         try:
             self.current_call = CallCallback(
                 self.acc,
-                hangup_callback=lambda: self.hangup()
+                hangup_callback=lambda: self.hangup(),
+                clear_on_disconnect_callback=lambda: self.clear_current_call()
             )
             call_prm = pj.CallOpParam(True)
             self.current_call.makeCall(uri, call_prm)
@@ -655,12 +688,16 @@ class PJsua2StreamingSystem:
             print(f"拨打失败: {e}")
             self.current_call = None
 
+    def clear_current_call(self):
+        """仅清空当前通话引用（用于 DISCONNECTED 时，避免对已终止会话再发 BYE）"""
+        self.current_call = None
+
     def hangup(self):
         if self.current_call:
             try:
                 prm = pj.CallOpParam()
                 self.current_call.hangup(prm)
-            except:
+            except Exception:
                 pass
             self.current_call = None
             print("已挂断")
