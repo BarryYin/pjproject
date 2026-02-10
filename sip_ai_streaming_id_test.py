@@ -342,6 +342,15 @@ class CallCallback(pj.Call):
             if self.streaming_asr:
                 self.streaming_asr.stop()
             print("  通话已结束")
+            # 通知系统清空 current_call，否则下次 call 会误报「已有通话中」
+            if self.hangup_callback:
+                def _clear_system_call():
+                    try:
+                        pj.Endpoint.instance().libRegisterThread("disconnected_clear")
+                    except Exception:
+                        pass
+                    self.hangup_callback()
+                threading.Thread(target=_clear_system_call, daemon=True).start()
 
     def onCallMediaState(self, prm):
         ci = self.getInfo()
@@ -562,8 +571,9 @@ class PJsua2StreamingSystem:
             self.ep = pj.Endpoint()
             self.ep.libCreate()
             ep_cfg = pj.EpConfig()
-            ep_cfg.logConfig.level = 4
-            ep_cfg.logConfig.consoleLevel = 4
+            # 日志级别: 0=关 1=错误 2=警告 3=信息 4=调试(含大量 playdbuf/capdbuf/SIP 等)。需要排查时改为 4
+            ep_cfg.logConfig.level = 3
+            ep_cfg.logConfig.consoleLevel = 3
             # 公网服务器版：不配置 STUN
             self.ep.libInit(ep_cfg)
 
