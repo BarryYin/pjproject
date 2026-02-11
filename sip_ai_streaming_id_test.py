@@ -20,6 +20,7 @@ import threading
 import wave
 import json
 import queue
+import atexit
 from datetime import datetime
 from pathlib import Path
 
@@ -27,6 +28,88 @@ from dotenv import load_dotenv
 load_dotenv()
 
 SCRIPT_DIR = Path(__file__).parent
+LOGS_DIR = SCRIPT_DIR / "logs"
+os.makedirs(LOGS_DIR, exist_ok=True)
+
+# 运行日志：同时输出到控制台和 logs/*.log
+_log_file = None
+_original_stdout = None
+_original_stderr = None
+
+class _Tee:
+    """将写入同时发往原流和日志文件"""
+    def __init__(self, stream, file_handle):
+        self._stream = stream
+        self._file = file_handle
+    def write(self, data):
+        if data:
+            try:
+                self._stream.write(data)
+                self._stream.flush()
+            except Exception:
+                pass
+            try:
+                self._file.write(data)
+                self._file.flush()
+            except Exception:
+                pass
+    def flush(self):
+        try:
+            self._stream.flush()
+            self._file.flush()
+        except Exception:
+            pass
+    def isatty(self):
+        return getattr(self._stream, "isatty", lambda: False)()
+
+def _init_run_log():
+    """按日期写入 logs/ 下当日 .log 文件（追加），并 tee stdout/stderr 到该文件。"""
+    global _log_file, _original_stdout, _original_stderr
+    if _log_file is not None:
+        return
+    date_str = datetime.now().strftime("%Y%m%d")
+    log_path = LOGS_DIR / f"sip_ai_streaming_id_test_{date_str}.log"
+    _log_file = open(log_path, "a", encoding="utf-8")
+    run_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _log_file.write(f"\n{'='*60}\n>>> {run_ts} 新运行\n{'='*60}\n")
+    _log_file.flush()
+    _original_stdout = sys.stdout
+    _original_stderr = sys.stderr
+    sys.stdout = _Tee(_original_stdout, _log_file)
+    sys.stderr = _Tee(_original_stderr, _log_file)
+    atexit.register(_close_run_log)
+    print(f"[日志] 运行日志追加写入: {log_path}")
+
+def _close_run_log():
+    """退出时恢复 stdout/stderr 并关闭日志文件。"""
+    global _log_file, _original_stdout, _original_stderr
+    if _log_file is None:
+        return
+    try:
+        sys.stdout = _original_stdout
+        sys.stderr = _original_stderr
+        _log_file.close()
+    except Exception:
+        pass
+    _log_file = None
+    _original_stdout = None
+    _original_stderr = None
+
+def _trace(stage, event, detail=None, error=None, duration=None):
+    """服务链路追踪：ASR / LLM / TTS / PIPELINE，同步写入当日运行 log。"""
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    parts = [f"[追踪] {ts} | {stage} | {event}"]
+    if detail is not None:
+        parts.append(f" | {detail}")
+    if error is not None:
+        parts.append(f" | 错误: {error}")
+    if duration is not None:
+        parts.append(f" | 耗时: {duration:.2f}s")
+    line = "".join(parts) + "\n"
+    try:
+        print(line.rstrip())
+    except Exception:
+        pass
 
 CONFIG = {
     'sip_server': os.getenv('SIP_SERVER', '147.139.205.88'),
@@ -61,9 +144,13 @@ CONFIG = {
         'hm', 'hmm', 'mm', 'mmm', 'uh', 'um', 'ah', 'eh',
     ],
     'farewell_message': 'Baik, terima kasih. Sampai jumpa.',
+    'recording_dir': str(SCRIPT_DIR / 'logs' / 'recordings'),
+    'recording_enabled': os.getenv('RECORDING_ENABLED', 'true').lower() in ('1', 'true', 'yes'),
 }
 
 os.makedirs(CONFIG['temp_dir'], exist_ok=True)
+if CONFIG.get('recording_enabled'):
+    os.makedirs(CONFIG['recording_dir'], exist_ok=True)
 
 
 def apply_wav_gain(wav_path, gain):
@@ -86,6 +173,93 @@ def apply_wav_gain(wav_path, gain):
             wf.writeframes(struct.pack(fmt, *out))
     except Exception as e:
         print(f"  [增益] 跳过: {e}")
+
+
+def _mix_recordings_to_wav(remote_wav_path, local_segments, recording_start_time, out_path, sample_rate=8000):
+    """将对方轨与己方轨按时间对齐混成单轨 WAV。"""
+    import struct
+    try:
+        file_size = os.path.getsize(remote_wav_path) if os.path.exists(remote_wav_path) else 0
+        if file_size < 8:
+            print(f"  [录音] 远程录音文件过小或为空 ({file_size} bytes): {remote_wav_path}")
+            return False
+        remote_pcm = None
+        r_sr = 8000
+        try:
+            with wave.open(remote_wav_path, 'rb') as wf:
+                r_nch, r_sw, r_sr, r_nf, _, _ = wf.getparams()
+                remote_pcm = wf.readframes(r_nf)
+            if r_sw != 2:
+                print(f"  [录音] 远程 WAV 非 16bit (sw={r_sw})，尝试 raw PCM 回退")
+                remote_pcm = None
+        except Exception as wav_err:
+            print(f"  [录音] 远程文件非标准 WAV ({wav_err})，尝试 raw PCM 回退")
+            remote_pcm = None
+        if remote_pcm is None:
+            with open(remote_wav_path, 'rb') as f:
+                raw_data = f.read()
+            if len(raw_data) > 44 and raw_data[:4] == b'RIFF':
+                remote_pcm = raw_data[44:]
+            else:
+                remote_pcm = raw_data
+            # 采样率使用会议桥时钟（通常 16kHz），而非 8kHz，否则音频会被拉长到两倍时长
+            r_sr = CONFIG.get('sample_rate', 16000)
+            print(f"  [录音] 以 raw PCM 读取远程音频 ({len(remote_pcm)} bytes, 假设 {r_sr}Hz)")
+        if len(remote_pcm) < 2:
+            print(f"  [录音] 远程音频数据为空")
+            return False
+        fmt = '<%dh' % (len(remote_pcm) // 2)
+        remote_samples = list(struct.unpack(fmt, remote_pcm[:len(remote_pcm) // 2 * 2]))
+        print(f"  [录音] 远程轨: {len(remote_samples)} samples ({len(remote_samples)/r_sr:.1f}s @ {r_sr}Hz)")
+        if r_sr != sample_rate and r_sr > 0:
+            ratio = sample_rate / r_sr
+            remote_samples = [remote_samples[min(int(i / ratio), len(remote_samples) - 1)] for i in range(int(len(remote_samples) * ratio))]
+        total_len = len(remote_samples)
+        local_samples = [0] * total_len
+        local_seg_count = 0
+        for start_sec, pcm_bytes, sr in (local_segments or []):
+            if not pcm_bytes or len(pcm_bytes) < 2:
+                continue
+            local_seg_count += 1
+            n = len(pcm_bytes) // 2
+            seg = list(struct.unpack('<%dh' % n, pcm_bytes[: n * 2]))
+            if sr == 16000 and sample_rate == 8000:
+                seg = [seg[i * 2] for i in range(len(seg) // 2)]
+            start_idx = int(start_sec * sample_rate)
+            for i, s in enumerate(seg):
+                idx = start_idx + i
+                if idx >= total_len:
+                    total_len = idx + 1
+                    local_samples.extend([0] * (total_len - len(local_samples)))
+                if idx < len(local_samples):
+                    local_samples[idx] = s
+        print(f"  [录音] 本地轨: {local_seg_count} 段 TTS 音频")
+        if total_len > len(remote_samples):
+            remote_samples.extend([0] * (total_len - len(remote_samples)))
+        if total_len > len(local_samples):
+            local_samples.extend([0] * (total_len - len(local_samples)))
+        # 远端电话音频通常比本地 TTS 弱很多，需要先做增益再混合
+        remote_gain = float(CONFIG.get('playback_gain', 3.0))
+        mixed = []
+        for i in range(total_len):
+            r = remote_samples[i] if i < len(remote_samples) else 0
+            l = local_samples[i] if i < len(local_samples) else 0
+            v = int(r * remote_gain * 0.5 + l * 0.5)
+            mixed.append(max(-32767, min(32767, v)))
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        with wave.open(out_path, 'wb') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(struct.pack('<%dh' % len(mixed), *mixed))
+        duration = len(mixed) / sample_rate
+        print(f"  [录音] 混轨完成: {duration:.1f}s, {os.path.getsize(out_path)} bytes")
+        return True
+    except Exception as e:
+        import traceback
+        print(f"  [录音] 混轨失败: {e}")
+        traceback.print_exc()
+        return False
 
 
 # ==================== 流式 ASR ====================
@@ -120,6 +294,7 @@ class StreamingASR:
                             asr_instance.current_text = text
                             if is_end:
                                 print(f"\n  [ASR] ✓ 识别完成: {text}")
+                                _trace("ASR", "result", detail=f'识别: "{text[:80]}{"..." if len(text) > 80 else ""}"')
                                 if asr_instance.on_sentence_end and text.strip():
                                     asr_instance.on_sentence_end(text.strip())
                                 asr_instance.current_text = ""
@@ -132,7 +307,7 @@ class StreamingASR:
                 model='paraformer-realtime-v2',
                 format='pcm',
                 sample_rate=CONFIG['sample_rate'],
-                language_hints=['id'],
+                language_hints=['en'],
                 callback=ASRCallback()
             )
             self.recognition.start()
@@ -142,11 +317,14 @@ class StreamingASR:
                 time.sleep(0.1)
             if self.connected:
                 print("[ASR] ✓ DashScope 流式 ASR 已启动 (印尼语)")
+                _trace("ASR", "start", detail="DashScope paraformer-realtime-v2 已连接")
                 return True
             print("[ASR] ✗ 连接超时")
+            _trace("ASR", "fail", error="连接超时")
             return False
         except Exception as e:
             print(f"[ASR] ✗ 启动失败: {e}")
+            _trace("ASR", "fail", error=str(e))
             import traceback
             traceback.print_exc()
             return False
@@ -157,6 +335,7 @@ class StreamingASR:
                 self.recognition.send_audio_frame(pcm_data)
             except Exception as e:
                 print(f"[ASR] 发送音频失败: {e}")
+                _trace("ASR", "fail", error=str(e))
 
     def stop(self):
         if self.recognition:
@@ -181,13 +360,16 @@ class TTSEngine:
             print(f"[TTS] ✓ DashScope TTS 已初始化 (voice: {self.model})")
         except Exception as e:
             print(f"[TTS] ✗ 初始化失败: {e}")
+            _trace("TTS", "fail", error=f"初始化: {e}")
             self.initialized = False
 
     def synthesize(self, text):
         if not self.initialized:
+            _trace("TTS", "skip", detail="未初始化")
             return None
         try:
             start = time.time()
+            _trace("TTS", "request", detail=f'合成: "{text[:80]}{"..." if len(text) > 80 else ""}"')
             ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             wav = os.path.join(CONFIG['temp_dir'], f"tts_{ts}.wav")
             result = self.SpeechSynthesizer.call(
@@ -197,10 +379,13 @@ class TTSEngine:
                 raise Exception("未生成音频数据")
             with open(wav, 'wb') as f:
                 f.write(result.get_audio_data())
-            print(f"  [TTS] 完成 ({time.time() - start:.1f}s)")
+            elapsed = time.time() - start
+            print(f"  [TTS] 完成 ({elapsed:.1f}s)")
+            _trace("TTS", "done", duration=elapsed)
             return wav
         except Exception as e:
             print(f"  [TTS] 失败: {e}")
+            _trace("TTS", "fail", error=str(e))
             return None
 
 
@@ -215,6 +400,7 @@ class AIEngine:
             print(f"[AI] ✓ GPT 已初始化 (model: {CONFIG['ai_model']})")
         except Exception as e:
             print(f"[AI] ✗ 初始化失败: {e}")
+            _trace("LLM", "fail", error=f"初始化: {e}")
             self.client = None
 
     def _load_prompt(self):
@@ -242,8 +428,10 @@ class AIEngine:
 
     def get_response(self, user_text):
         if not self.client or not user_text:
+            _trace("LLM", "skip", detail="client或输入为空")
             return None
         try:
+            _trace("LLM", "request", detail=f'输入: "{user_text[:80]}{"..." if len(user_text) > 80 else ""}"')
             self.context.append({"role": "user", "content": user_text})
             response = self.client.chat.completions.create(
                 model=CONFIG['ai_model'],
@@ -256,9 +444,11 @@ class AIEngine:
             )
             reply = response.choices[0].message.content.strip()
             self.context.append({"role": "assistant", "content": reply})
+            _trace("LLM", "response", detail=f'输出: "{reply[:80]}{"..." if len(reply) > 80 else ""}"')
             return reply
         except Exception as e:
             print(f"[AI] 错误: {e}")
+            _trace("LLM", "fail", error=str(e))
             return None
 
 
@@ -306,6 +496,16 @@ class CallCallback(pj.Call):
         self.tts = TTSEngine()
         self.ai = AIEngine()
         self.streaming_asr = None
+        # 通话录音（双方混轨为单文件）
+        self._recorder_remote = None
+        self._aud_med_for_recording = None
+        self.recording_start_time = None
+        self._local_recording = []
+        self._recording_remote_path = None
+        self._recording_ts = None
+        # 防重复：避免 ASR 误识别同一句导致 AI 反复说同一句话
+        self._last_user_speech_text = None
+        self._last_user_speech_time = 0.0
 
     def onCallState(self, prm):
         ci = self.getInfo()
@@ -326,6 +526,10 @@ class CallCallback(pj.Call):
             self.connected = True
             self.call_start_time = time.time()
             print("  ✓ 通话已接通")
+            # 媒体可能在 EARLY 时已 ACTIVE，进入 CONFIRMED 后 onCallMediaState 可能不再触发，此处主动启动 setup_audio
+            if not self.audio_setup_done:
+                self.audio_setup_done = True
+                threading.Thread(target=self.setup_audio, daemon=True).start()
             if self.hangup_callback:
                 def _duration_check():
                     try:
@@ -370,15 +574,51 @@ class CallCallback(pj.Call):
                     print(f"  原因: {reason}" if reason else f"  原因: 代码 {code}")
             except Exception:
                 pass
-            # 仅清空 current_call，不调 hangup()，避免对已终止会话再发 BYE 报错 (Invalid call_id / ESESSIONTERMINATED)
+            # 录音混轨并保存（若已开启），再清空 current_call
             if self.clear_on_disconnect_callback:
-                def _clear_system_call():
+                def _finish_recording_and_clear():
                     try:
                         pj.Endpoint.instance().libRegisterThread("disconnected_clear")
                     except Exception:
                         pass
+                    rec_remote = getattr(self, '_recording_remote_path', None)
+                    rec_enabled = CONFIG.get('recording_enabled')
+                    if rec_enabled and rec_remote and os.path.exists(rec_remote):
+                        try:
+                            try:
+                                aud = getattr(self, '_aud_med_for_recording', None)
+                                rec = getattr(self, '_recorder_remote', None)
+                                if aud and rec:
+                                    aud.stopTransmit(rec)
+                            except Exception:
+                                pass
+                            try:
+                                if self._recorder_remote is not None:
+                                    self._recorder_remote = None
+                            except Exception:
+                                pass
+                            time.sleep(0.5)
+                            local_segments = getattr(self, '_local_recording', []) or []
+                            rec_dir = CONFIG.get('recording_dir') or str(SCRIPT_DIR / 'logs' / 'recordings')
+                            ts = getattr(self, '_recording_ts', None) or datetime.now().strftime("%Y%m%d_%H%M%S")
+                            final_path = os.path.join(rec_dir, f"call_{ts}_mixed.wav")
+                            rec_start = getattr(self, 'recording_start_time', 0) or 0
+                            ok = _mix_recordings_to_wav(rec_remote, local_segments, rec_start, final_path)
+                            if ok:
+                                print(f"  [录音] ✓ 已保存: {final_path}")
+                            else:
+                                print(f"  [录音] 混轨返回失败，远程文件: {rec_remote} (大小: {os.path.getsize(rec_remote) if os.path.exists(rec_remote) else 'N/A'} bytes)")
+                            try:
+                                if os.path.exists(rec_remote):
+                                    os.remove(rec_remote)
+                            except Exception:
+                                pass
+                        except Exception as e:
+                            import traceback
+                            print(f"  [录音] 混轨/保存失败: {e}")
+                            traceback.print_exc()
                     self.clear_on_disconnect_callback()
-                threading.Thread(target=_clear_system_call, daemon=True).start()
+                threading.Thread(target=_finish_recording_and_clear, daemon=True).start()
 
     def onCallMediaState(self, prm):
         ci = self.getInfo()
@@ -410,6 +650,22 @@ class CallCallback(pj.Call):
                     self.audio_port = StreamingAudioPort(self)
                     aud_med.startTransmit(self.audio_port)
                     print("  [音频] ✓ 实时音频接收已连接")
+                    if CONFIG.get('recording_enabled'):
+                        try:
+                            rec_dir = CONFIG.get('recording_dir') or str(SCRIPT_DIR / 'logs' / 'recordings')
+                            os.makedirs(rec_dir, exist_ok=True)
+                            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            self._recording_ts = ts
+                            self._recording_remote_path = os.path.join(rec_dir, f"_call_{ts}_remote.wav")
+                            self._recorder_remote = pj.AudioMediaRecorder()
+                            self._recorder_remote.createRecorder(self._recording_remote_path, 0, 0, 0)
+                            aud_med.startTransmit(self._recorder_remote)
+                            self._aud_med_for_recording = aud_med
+                            self.recording_start_time = time.time()
+                            self._local_recording = []
+                            print(f"  [录音] ✓ 已开启（将保存双方混轨至 {rec_dir}）")
+                        except Exception as ex:
+                            print(f"  [录音] 开启失败: {ex}")
                     self.play_welcome()
                     self.streaming_asr = StreamingASR(on_sentence_end=self.on_user_speech)
                     self.streaming_asr.start()
@@ -439,6 +695,15 @@ class CallCallback(pj.Call):
         try:
             if not self.connected:
                 return
+            if CONFIG.get('recording_enabled') and self.recording_start_time is not None and os.path.exists(audio_file):
+                try:
+                    with wave.open(audio_file, 'rb') as wf:
+                        nch, sw, sr, nf, _, _ = wf.getparams()
+                        pcm = wf.readframes(nf)
+                    start_offset = time.time() - self.recording_start_time
+                    self._local_recording.append((start_offset, pcm, sr))
+                except Exception:
+                    pass
             with self._playback_lock:
                 self._stop_playback = False
             if self.audio_port:
@@ -507,6 +772,16 @@ class CallCallback(pj.Call):
         if not self.connected or not text or not text.strip() or self._is_ending:
             return
         recognized = text.strip()
+        if len(recognized) < 2:
+            return
+        meaningful = ''.join(c for c in recognized if c.isalnum() or c.isspace()).strip()
+        if len(meaningful) < 2:
+            return
+        now = time.time()
+        if recognized == self._last_user_speech_text and (now - self._last_user_speech_time) < 10.0:
+            return
+        self._last_user_speech_text = recognized
+        self._last_user_speech_time = now
         recognized_lower = recognized.lower()
         goodbye_matched = [kw for kw in CONFIG['goodbye_keywords'] if kw in recognized_lower]
         if goodbye_matched:
@@ -556,18 +831,29 @@ class CallCallback(pj.Call):
             self.is_processing = False
             return
         try:
+            _trace("PIPELINE", "start", detail=f'用户: "{text[:60]}{"..." if len(text) > 60 else ""}"')
             print(f"\n  👤 用户: {text}")
             print("  [AI] 生成回复...")
             reply = self.ai.get_response(text)
             if reply:
+                _trace("PIPELINE", "llm_ok")
                 print(f"  🤖 AI: {reply}")
                 print("  [TTS] 合成...")
                 audio = self.tts.synthesize(reply)
                 if audio and self.connected and not self._is_ending:
                     self.play_audio(audio)
                     print("  ✓ 回复已播放")
+                    _trace("PIPELINE", "tts_ok")
+                else:
+                    if not audio:
+                        _trace("PIPELINE", "tts_fail", detail="TTS 返回空")
+                    else:
+                        _trace("PIPELINE", "tts_ok")
+            else:
+                _trace("PIPELINE", "llm_empty", detail="LLM 无回复")
         except Exception as e:
             print(f"  ✗ 处理失败: {e}")
+            _trace("PIPELINE", "fail", error=str(e))
         finally:
             self.is_processing = False
 
@@ -731,6 +1017,7 @@ class PJsua2StreamingSystem:
 
 
 def main():
+    _init_run_log()
     system = PJsua2StreamingSystem()
     if system.start():
         system.run()
