@@ -115,6 +115,7 @@ CONFIG = {
     'sample_rate': 16000,
     'playback_gain': float(os.getenv('PLAYBACK_GAIN', '2.0')),
     'max_call_duration_sec': int(os.getenv('MAX_CALL_DURATION_SEC', '120')),
+    'ring_timeout_sec': int(os.getenv('RING_TIMEOUT_SEC', '35')),
     'ivr_audio_file': os.getenv('IVR_AUDIO_FILE', ''),
     'audio_dir': str(SCRIPT_DIR / 'audio_files'),
     'recording_dir': str(SCRIPT_DIR / 'logs' / 'recordings'),
@@ -258,6 +259,27 @@ class IVRCallCallback(pj.Call):
             print(f"  [{self._tag}] 振铃中，等待对方接听...")
             if self.cdr["ts_ringing"] is None:
                 self.cdr["ts_ringing"] = time.time()
+                ring_timeout = CONFIG.get('ring_timeout_sec', 35)
+                def _ring_timeout_check():
+                    try:
+                        pj.Endpoint.instance().libRegisterThread("ring_timeout")
+                    except Exception:
+                        pass
+                    deadline = time.time() + ring_timeout
+                    while time.time() < deadline:
+                        if self.connected or self.cdr.get("ts_hangup"):
+                            return
+                        time.sleep(1)
+                    if not self.connected and not self.cdr.get("ts_hangup"):
+                        print(f"\n  [{self._tag}] [挂断] 振铃超时 {ring_timeout}s 未接听")
+                        self._user_hangup_initiated = True
+                        try:
+                            call_prm = pj.CallOpParam()
+                            call_prm.statusCode = pj.PJSIP_SC_REQUEST_TIMEOUT
+                            self.hangup(call_prm)
+                        except Exception:
+                            pass
+                threading.Thread(target=_ring_timeout_check, daemon=True).start()
 
         elif ci.state == pj.PJSIP_INV_STATE_CONFIRMED:
             self.connected = True
@@ -564,6 +586,7 @@ class IVRSystem:
             _transport = (CONFIG.get('sip_transport') or 'udp').upper()
             print(f"  传输协议: {_transport}")
             print(f"  最大并发: {max_conc} 路")
+            print(f"  振铃超时: {CONFIG['ring_timeout_sec']}s")
             print(f"  IVR 音频: {audio_status}")
             print(f"  音频目录: {CONFIG['audio_dir']}")
             print(f"  播放增益: {CONFIG['playback_gain']}x")
