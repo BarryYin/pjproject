@@ -699,10 +699,11 @@ class IVRSystem:
             callback.makeCall(uri, call_prm)
             return True, call_id
         except Exception as e:
-            print(f"拨打失败: {e}")
+            err_msg = str(e).strip() or type(e).__name__
+            print(f"拨打失败: {err_msg}")
             with self._calls_lock:
                 self.active_calls.pop(call_id, None)
-            return False, str(e)
+            return False, err_msg
 
     def _remove_call(self, call_id):
         """通话结束后从活跃列表移除"""
