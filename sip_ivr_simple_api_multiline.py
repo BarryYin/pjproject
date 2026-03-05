@@ -518,6 +518,7 @@ class IVRSystem:
             ep_cfg = pj.EpConfig()
             ep_cfg.logConfig.level = 3
             ep_cfg.logConfig.consoleLevel = 3
+            ep_cfg.uaConfig.maxCalls = CONFIG['max_concurrent_calls']
             self.ep.libInit(ep_cfg)
 
             tp_cfg = pj.TransportConfig()
