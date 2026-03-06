@@ -124,6 +124,7 @@ CONFIG = {
     'api_host': os.getenv('API_HOST', '0.0.0.0'),
     'api_port': int(os.getenv('API_PORT', '8088')),
     'max_concurrent_calls': int(os.getenv('MAX_CONCURRENT_CALLS', '10')),
+    'recording_remote_gain': float(os.getenv('RECORDING_REMOTE_GAIN', '3.0')),
 }
 
 os.makedirs(CONFIG['audio_dir'], exist_ok=True)
@@ -238,6 +239,8 @@ class IVRCallCallback(pj.Call):
         self.recording_start_time = None
         self._recording_remote_path = None
         self._recording_ts = None
+        self._ivr_play_offset = None
+        self._ivr_original_file = None
         # CDR
         self.cdr = _new_cdr()
         self._tag = self.cdr["call_id"][:8]
@@ -436,6 +439,9 @@ class IVRCallCallback(pj.Call):
             player = pj.AudioMediaPlayer()
             player.createPlayer(temp_file, pj.PJMEDIA_FILE_NO_LOOP)
             player.startTransmit(aud_med)
+            if self.recording_start_time:
+                self._ivr_play_offset = time.time() - self.recording_start_time
+                self._ivr_original_file = audio_file
             self.cdr["ivr_play_started"] = True
             play_start = time.time()
             print(f"  [{self._tag}] [IVR] ▶ 正在播放... ({duration:.1f}s)")
@@ -476,7 +482,7 @@ class IVRCallCallback(pj.Call):
                 pass
 
     def _finalize_recording(self):
-        """通话结束时停止录音并保存"""
+        """通话结束时停止录音，混合远端+IVR音频后保存"""
         rec_remote = self._recording_remote_path
         if not CONFIG.get('recording_enabled') or not rec_remote:
             return
@@ -493,18 +499,118 @@ class IVRCallCallback(pj.Call):
             except Exception:
                 pass
             time.sleep(0.3)
-            if os.path.exists(rec_remote) and os.path.getsize(rec_remote) > 44:
+
+            if not os.path.exists(rec_remote) or os.path.getsize(rec_remote) < 44:
+                print(f"  [{self._tag}] [录音] 文件为空或不存在: {rec_remote}")
+                return
+
+            ivr_file = self._ivr_original_file
+            ivr_offset = self._ivr_play_offset
+            if not ivr_file or not os.path.exists(ivr_file) or ivr_offset is None:
                 self.cdr["recording_path"] = rec_remote
                 try:
                     with wave.open(rec_remote, 'rb') as wf:
                         self.cdr["recording_sec"] = round(wf.getnframes() / wf.getframerate(), 2)
                 except Exception:
                     pass
-                print(f"  [{self._tag}] [录音] ✓ 已保存: {rec_remote} ({self.cdr['recording_sec']:.1f}s)")
+                print(f"  [{self._tag}] [录音] ✓ 已保存(仅远端): {rec_remote} ({self.cdr['recording_sec']:.1f}s)")
+                return
+
+            mixed_path = rec_remote.replace('.wav', '_mixed.wav')
+            ok = self._mix_recording(rec_remote, ivr_file, ivr_offset, mixed_path)
+            if ok:
+                self.cdr["recording_path"] = mixed_path
+                try:
+                    with wave.open(mixed_path, 'rb') as wf:
+                        self.cdr["recording_sec"] = round(wf.getnframes() / wf.getframerate(), 2)
+                except Exception:
+                    pass
+                print(f"  [{self._tag}] [录音] ✓ 已保存(混轨): {mixed_path} ({self.cdr['recording_sec']:.1f}s)")
             else:
-                print(f"  [{self._tag}] [录音] 文件为空或不存在: {rec_remote}")
+                self.cdr["recording_path"] = rec_remote
+                try:
+                    with wave.open(rec_remote, 'rb') as wf:
+                        self.cdr["recording_sec"] = round(wf.getnframes() / wf.getframerate(), 2)
+                except Exception:
+                    pass
+                print(f"  [{self._tag}] [录音] ✓ 已保存(仅远端): {rec_remote} ({self.cdr['recording_sec']:.1f}s)")
         except Exception as e:
             print(f"  [{self._tag}] [录音] 保存失败: {e}")
+
+    def _mix_recording(self, remote_path, ivr_path, ivr_offset_sec, out_path):
+        """将远端录音与 IVR 音频按时间对齐混合为单轨 WAV"""
+        try:
+            remote_pcm = None
+            r_sr = 8000
+            try:
+                with wave.open(remote_path, 'rb') as wf:
+                    r_nch, r_sw, r_sr, r_nf, _, _ = wf.getparams()
+                    remote_pcm = wf.readframes(r_nf)
+                if r_sw != 2:
+                    remote_pcm = None
+            except Exception:
+                remote_pcm = None
+            if remote_pcm is None:
+                with open(remote_path, 'rb') as f:
+                    raw = f.read()
+                if len(raw) > 44 and raw[:4] == b'RIFF':
+                    remote_pcm = raw[44:]
+                else:
+                    remote_pcm = raw
+                r_sr = CONFIG.get('sample_rate', 16000)
+                print(f"  [{self._tag}] [录音] 以 raw PCM 读取远端音频 ({len(remote_pcm)} bytes, {r_sr}Hz)")
+            if len(remote_pcm) < 2:
+                return False
+
+            out_sr = r_sr
+            fmt_r = '<%dh' % (len(remote_pcm) // 2)
+            remote_samples = list(struct.unpack(fmt_r, remote_pcm[:len(remote_pcm) // 2 * 2]))
+            print(f"  [{self._tag}] [录音] 远端轨: {len(remote_samples)} samples ({len(remote_samples)/r_sr:.1f}s @ {r_sr}Hz)")
+
+            with wave.open(ivr_path, 'rb') as wf:
+                i_nch, i_sw, i_sr, i_nf, _, _ = wf.getparams()
+                ivr_pcm = wf.readframes(i_nf)
+            fmt_i = '<%dh' % (len(ivr_pcm) // 2)
+            ivr_samples = list(struct.unpack(fmt_i, ivr_pcm[:len(ivr_pcm) // 2 * 2]))
+
+            if i_sr != out_sr and i_sr > 0:
+                ratio = out_sr / i_sr
+                ivr_samples = [ivr_samples[min(int(i / ratio), len(ivr_samples) - 1)]
+                               for i in range(int(len(ivr_samples) * ratio))]
+            print(f"  [{self._tag}] [录音] IVR轨: {len(ivr_samples)} samples ({len(ivr_samples)/out_sr:.1f}s @ {out_sr}Hz)")
+
+            total_len = len(remote_samples)
+            start_idx = max(0, int(ivr_offset_sec * out_sr))
+            end_idx = start_idx + len(ivr_samples)
+            if end_idx > total_len:
+                remote_samples.extend([0] * (end_idx - total_len))
+                total_len = end_idx
+
+            remote_gain = CONFIG.get('recording_remote_gain', 3.0)
+            print(f"  [{self._tag}] [录音] 远端增益: {remote_gain}x")
+
+            mixed = []
+            for i in range(total_len):
+                r_val = remote_samples[i] if i < len(remote_samples) else 0
+                r_val = int(r_val * remote_gain)
+                i_val = 0
+                ivr_idx = i - start_idx
+                if 0 <= ivr_idx < len(ivr_samples):
+                    i_val = ivr_samples[ivr_idx]
+                sample = r_val + i_val
+                mixed.append(max(-32767, min(32767, sample)))
+
+            print(f"  [{self._tag}] [录音] 混轨完成: {len(mixed)/out_sr:.1f}s")
+            fmt_out = '<%dh' % len(mixed)
+            with wave.open(out_path, 'wb') as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(out_sr)
+                wf.writeframes(struct.pack(fmt_out, *mixed))
+            return True
+        except Exception as e:
+            print(f"  [{self._tag}] [录音] 混轨失败: {e}")
+            return False
 
 
 # ==================== 账号回调 ====================
