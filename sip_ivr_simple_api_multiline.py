@@ -33,6 +33,7 @@ from datetime import datetime
 from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
+import urllib.request
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -223,12 +224,14 @@ def apply_wav_gain(wav_path, gain):
 # ==================== 呼叫回调 ====================
 class IVRCallCallback(pj.Call):
     def __init__(self, acc, call_id=pj.PJSUA_INVALID_ID, hangup_callback=None,
-                 clear_on_disconnect_callback=None, ivr_audio_file=None):
+                 clear_on_disconnect_callback=None, ivr_audio_file=None,
+                 callback_url=None):
         pj.Call.__init__(self, acc, call_id)
         self.acc = acc
         self.hangup_callback = hangup_callback
         self.clear_on_disconnect_callback = clear_on_disconnect_callback
         self.ivr_audio_file = ivr_audio_file or ''
+        self.callback_url = callback_url
         self.connected = False
         self.audio_setup_done = False
         self.call_start_time = None
@@ -356,10 +359,19 @@ class IVRCallCallback(pj.Call):
                         pass
                     self._finalize_recording()
                     _save_cdr(self.cdr)
+                    if self.callback_url:
+                        _send_webhook(self.callback_url, self.cdr, tag=self._tag)
                     self.clear_on_disconnect_callback()
                 threading.Thread(target=_finish_and_clear, daemon=True).start()
             else:
                 _save_cdr(self.cdr)
+                if self.callback_url:
+                    threading.Thread(
+                        target=_send_webhook,
+                        args=(self.callback_url, self.cdr),
+                        kwargs={"tag": self._tag},
+                        daemon=True,
+                    ).start()
 
     def onCallMediaState(self, prm):
         ci = self.getInfo()
@@ -579,12 +591,9 @@ class IVRCallCallback(pj.Call):
                                for i in range(int(len(ivr_samples) * ratio))]
             print(f"  [{self._tag}] [录音] IVR轨: {len(ivr_samples)} samples ({len(ivr_samples)/out_sr:.1f}s @ {out_sr}Hz)")
 
+            # 混轨时长 = 实际通话时长（远端录音长度），不包含对方挂断后未播放的 IVR
             total_len = len(remote_samples)
             start_idx = max(0, int(ivr_offset_sec * out_sr))
-            end_idx = start_idx + len(ivr_samples)
-            if end_idx > total_len:
-                remote_samples.extend([0] * (end_idx - total_len))
-                total_len = end_idx
 
             remote_gain = CONFIG.get('recording_remote_gain', 3.0)
             print(f"  [{self._tag}] [录音] 远端增益: {remote_gain}x")
@@ -611,6 +620,67 @@ class IVRCallCallback(pj.Call):
         except Exception as e:
             print(f"  [{self._tag}] [录音] 混轨失败: {e}")
             return False
+
+
+def _send_webhook(callback_url, cdr, tag="????", max_retries=3):
+    """通话结束后向 callback_url 发送 CDR，带重试"""
+    def _ts_iso(ts):
+        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else None
+
+    payload = {
+        "event": "call_completed",
+        "call_id": cdr.get("call_id", ""),
+        "phone_number": cdr.get("callee_raw", ""),
+        "callee": cdr.get("callee", ""),
+        "caller": cdr.get("caller", ""),
+        "disposition": cdr.get("disposition", ""),
+        "sip_code": cdr.get("sip_code", 0),
+        "sip_reason": cdr.get("sip_reason", ""),
+        "hangup_by": cdr.get("hangup_by", ""),
+        "hangup_cause": cdr.get("hangup_cause", ""),
+        "duration_ring": cdr.get("duration_ring", 0),
+        "duration_talk": cdr.get("duration_talk", 0),
+        "duration_total": cdr.get("duration_total", 0),
+        "ivr_audio_file": cdr.get("ivr_audio_file", ""),
+        "ivr_play_started": cdr.get("ivr_play_started", False),
+        "ivr_play_completed": cdr.get("ivr_play_completed", False),
+        "ivr_play_duration": cdr.get("ivr_play_duration", 0),
+        "recording_path": cdr.get("recording_path"),
+        "recording_sec": cdr.get("recording_sec", 0),
+        "ts_invite": _ts_iso(cdr.get("ts_invite")),
+        "ts_ringing": _ts_iso(cdr.get("ts_ringing")),
+        "ts_answer": _ts_iso(cdr.get("ts_answer")),
+        "ts_hangup": _ts_iso(cdr.get("ts_hangup")),
+    }
+
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    delays = [3, 10, 30]
+
+    for attempt in range(max_retries):
+        try:
+            req = urllib.request.Request(
+                callback_url,
+                data=body,
+                headers={"Content-Type": "application/json; charset=utf-8"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                status = resp.getcode()
+                if 200 <= status < 300:
+                    print(f"  [{tag}] [回调] ✓ 已推送 CDR → {callback_url} (HTTP {status})")
+                    return True
+                else:
+                    print(f"  [{tag}] [回调] 响应异常 HTTP {status}，第 {attempt+1}/{max_retries} 次")
+        except Exception as e:
+            print(f"  [{tag}] [回调] 发送失败: {e}，第 {attempt+1}/{max_retries} 次")
+
+        if attempt < max_retries - 1:
+            wait = delays[min(attempt, len(delays) - 1)]
+            print(f"  [{tag}] [回调] {wait}s 后重试...")
+            time.sleep(wait)
+
+    print(f"  [{tag}] [回调] ✗ 全部 {max_retries} 次重试失败，放弃推送")
+    return False
 
 
 # ==================== 账号回调 ====================
@@ -769,7 +839,7 @@ class IVRSystem:
         except Exception:
             pass
 
-    def make_call(self, number, audio_file=None):
+    def make_call(self, number, audio_file=None, callback_url=None):
         """发起呼叫，返回 (success, call_id_or_error)"""
         self._ensure_thread_registered()
         max_conc = CONFIG['max_concurrent_calls']
@@ -798,6 +868,7 @@ class IVRSystem:
                 hangup_callback=None,
                 clear_on_disconnect_callback=None,
                 ivr_audio_file=ivr_audio,
+                callback_url=callback_url,
             )
             call_id = callback.cdr["call_id"]
             tag = callback._tag
@@ -937,10 +1008,11 @@ class IVRAPIHandler(BaseHTTPRequestHandler):
     def _handle_call(self, data):
         phone_number = data.get('phone_number', '').strip()
         audio_file = data.get('audio_file', '').strip() or None
+        callback_url = data.get('callback_url', '').strip() or None
         if not phone_number:
             self._send_json({"success": False, "error": "缺少 phone_number 参数"}, 400)
             return
-        ok, result = self.ivr_system.make_call(phone_number, audio_file)
+        ok, result = self.ivr_system.make_call(phone_number, audio_file, callback_url=callback_url)
         if ok:
             status = self.ivr_system.get_status()
             self._send_json({
